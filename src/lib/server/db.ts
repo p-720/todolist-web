@@ -62,6 +62,12 @@ function initSchema(db) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS goals (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
@@ -613,10 +619,29 @@ export function setNote(date, content) {
 	return { date, content: trimmed, updated_at: now };
 }
 
-// --- Goals ---
+// --- Settings ---
 
 function now() {
 	return new Date().toISOString().replace("T", " ").substring(0, 19);
+}
+
+export function getSetting(key) {
+	const db = getDb();
+	return db.prepare("SELECT * FROM settings WHERE key = ?").get(key) || null;
+}
+
+export function setSetting(key, value) {
+	const db = getDb();
+	if (!value || value.trim() === "") {
+		db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+		return null;
+	}
+	const trimmed = value.trim();
+	const ts = now();
+	db.prepare(
+		"INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+	).run(key, trimmed, ts);
+	return { key, value: trimmed, updated_at: ts };
 }
 
 export function getGoals() {

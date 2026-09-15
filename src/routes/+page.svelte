@@ -14,6 +14,7 @@
   import StatsView from '$lib/components/StatsView.svelte';
   import GoalsView from '$lib/components/GoalsView.svelte';
   import NoteEditor from '$lib/components/NoteEditor.svelte';
+  import QuoteBanner from '$lib/components/QuoteBanner.svelte';
 
   let showAddDialog = false;
   let editingHabit = null;
@@ -140,6 +141,7 @@
 
 <div class="app-container">
   {#if activeTab === 'main'}
+    <QuoteBanner />
     <TimerBanner {habitsStore} />
     <WeekSummary {habitsStore} />
     <HabitList {groupsStore} onEdit={openEditDialog} onArchive={archiveHabit} onUnarchive={unarchiveHabit} onPermanentDelete={permanentlyDeleteHabit} onOpenNote={() => openNoteEditor()} />

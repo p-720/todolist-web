@@ -101,6 +101,9 @@ function handleMessage(msg) {
 		case "goals:update":
 			window.dispatchEvent(new CustomEvent("sync:goals"));
 			break;
+		case "quote:update":
+			window.dispatchEvent(new CustomEvent("sync:quote"));
+			break;
 	}
 }
 
