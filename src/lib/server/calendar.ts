@@ -138,7 +138,7 @@ export async function listCalendars(): Promise<Array<{ id: string; summary: stri
 
 export async function recentEvents(calendarId: string, limit = 5) {
 	const g = await buildApi();
-	const res = await g.calendar.events.list({ calendarId, maxResults: limit, orderBy: "startTime" });
+	const res = await g.events.list({ calendarId, maxResults: limit, orderBy: "startTime" });
 	return (res.data.items || []).map((e) => ({
 		id: e.id,
 		summary: e.summary,
