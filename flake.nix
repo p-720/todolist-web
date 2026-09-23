@@ -42,7 +42,7 @@
             pname = "pomotasker";
             version = "0.1.0";
             src = ./.;
-            npmDepsHash = "sha256-79wtNWSR4noPjlXhmssq52f8lwhRJXojzi5w4XjBM5s=";
+            npmDepsHash = "sha256-sE6xXmwATlaE+uonV8oJVepsODWe9D9Z79YWYPOcgdk=";
             nodejs = pkgs.nodejs_22;
             nativeBuildInputs = [ pkgs.python3 pkgs.node-gyp pkgs.pkg-config ];
             buildInputs = [ pkgs.sqlite ];
