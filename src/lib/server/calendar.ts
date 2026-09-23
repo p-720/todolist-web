@@ -138,8 +138,13 @@ export async function listCalendars(): Promise<Array<{ id: string; summary: stri
 
 export async function recentEvents(calendarId: string, limit = 5) {
 	const g = await buildApi();
-	const res = await g.events.list({ calendarId, maxResults: limit, orderBy: "startTime" });
-	return (res.data.items || []).map((e) => ({
+	// orderBy=startTime is only allowed with timeMin; use a window and sort client-side
+	const timeMin = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+	const res = await g.events.list({ calendarId, timeMin, maxResults: limit * 5 });
+	const items = (res.data.items || [])
+		.filter((e) => e.start?.dateTime)
+		.sort((a, b) => (a.start.dateTime! < b.start.dateTime! ? -1 : 1));
+	return items.slice(-limit).map((e) => ({
 		id: e.id,
 		summary: e.summary,
 		start: e.start?.dateTime || null,
@@ -228,7 +233,8 @@ export async function handleTimerEvent(
 	try {
 		const g = await buildApi();
 		const api: CalendarApi = {
-			createEvent: (cal, ev) => g.events.insert({ calendarId: cal, requestBody: ev }),
+			createEvent: async (cal, ev) =>
+				(await g.events.insert({ calendarId: cal, requestBody: ev })).data,
 			patchEvent: (cal, id, patch) =>
 				g.events.patch({ calendarId: cal, eventId: id, requestBody: patch }),
 		};
