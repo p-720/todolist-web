@@ -162,23 +162,32 @@ function clearOpen(habitId: number) {
 	getDb().prepare("DELETE FROM calendar_open_events WHERE habit_id = ?").run(habitId);
 }
 
-export async function startEvent(api: CalendarApi, calendarId: string, habit: { id: number; description: string }) {
-	const now = new Date().toISOString();
+export async function startEvent(
+	api: CalendarApi,
+	calendarId: string,
+	habit: { id: number; description: string },
+	provisionalSeconds?: number,
+) {
+	const now = new Date();
+	// Google requires an end time; use a provisional one until the timer stops
+	const provisional = Math.max(60, provisionalSeconds || 60);
+	const end = new Date(now.getTime() + provisional * 1000);
 	const open = getOpen(habit.id);
 	if (open) {
 		// close orphan from a previous run that never stopped
-		await api.patchEvent(open.calendar_id, open.event_id, { end: { dateTime: now } });
+		await api.patchEvent(open.calendar_id, open.event_id, { end: { dateTime: now.toISOString() } });
 		clearOpen(habit.id);
 	}
 	const created = await api.createEvent(calendarId, {
 		summary: habit.description,
-		start: { dateTime: now },
+		start: { dateTime: now.toISOString() },
+		end: { dateTime: end.toISOString() },
 	});
 	getDb()
 		.prepare(
 			"INSERT OR REPLACE INTO calendar_open_events (habit_id, calendar_id, event_id, start_iso) VALUES (?, ?, ?, ?)",
 		)
-		.run(habit.id, calendarId, created.id, now);
+		.run(habit.id, calendarId, created.id, now.toISOString());
 }
 
 export async function stopEvent(
@@ -212,7 +221,7 @@ export async function handleTimerEvent(
 			patchEvent: (cal, id, patch) =>
 				g.events.patch({ calendarId: cal, eventId: id, requestBody: patch }),
 		};
-		if (event === "start") await startEvent(api, prefs.calendarId, habit);
+		if (event === "start") await startEvent(api, prefs.calendarId, habit, durationSeconds);
 		else await stopEvent(api, habit, durationSeconds);
 		clearError();
 	} catch (e: unknown) {

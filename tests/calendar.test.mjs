@@ -1,5 +1,6 @@
 // Open-event lifecycle checks: run with `node tests/calendar.test.mjs`
-// Covers: create on start, orphan closed on next start, end patched on stop, no-op without open event.
+// Covers: create on start (provisional end — Google requires one), orphan closed on next start,
+// end patched on stop, provisional honors duration hint (min 60s), no-op without open event.
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,45 +24,52 @@ const api = {
 	},
 };
 
-const habit = { id: 7, description: "Read book" };
+const iso = (d) => d.toISOString();
 
-// 1. start → event created (no end), open row recorded
-await startEvent(api, "cal-main", habit);
+// 1. start → event created with provisional end, open row recorded
+await startEvent(api, "cal-main", { id: 7, description: "Read book" });
 assert.equal(created.length, 1);
 assert.equal(created[0].cal, "cal-main");
 assert.equal(created[0].ev.summary, "Read book");
 assert.ok(created[0].ev.start.dateTime);
-assert.equal(created[0].ev.end, undefined);
+assert.ok(created[0].ev.end.dateTime);
+assert.ok(new Date(created[0].ev.end.dateTime) > new Date(created[0].ev.start.dateTime));
 assert.equal(patched.length, 0);
 
-// 2. start again without stopping → orphan closed (end patched), new event created
-await startEvent(api, "cal-main", habit);
-assert.equal(created.length, 2);
-assert.equal(patched.length, 1);
-assert.equal(patched[0].id, "evt1");
-assert.ok(patched[0].patch.end.dateTime);
+// 1b. provisional honors duration hint
+await startEvent(api, "cal-main", { id: 8, description: "Timed" }, 1500);
+const s2 = new Date(created[1].ev.start.dateTime);
+assert.equal(new Date(created[1].ev.end.dateTime).getTime() - s2.getTime(), 1500 * 1000);
+// zero-elapsed stop → end == start
+await stopEvent(api, { id: 8 });
+assert.equal(patched[0].id, "evt2");
+assert.equal(patched[0].patch.end.dateTime, iso(s2));
+
+// 1c. tiny hint is clamped to the 60s floor
+await startEvent(api, "cal-main", { id: 9, description: "Tiny" }, 5);
+await stopEvent(api, { id: 9 }, 10);
+const s3 = new Date(created[2].ev.start.dateTime);
+assert.equal(new Date(created[2].ev.end.dateTime).getTime() - s3.getTime(), 60 * 1000);
+
+// 2. start habit 7 again without stopping → orphan closed (end patched), new event created
+await startEvent(api, "cal-main", { id: 7, description: "Read book" });
+assert.equal(created.length, 4);
+assert.equal(patched[2].id, "evt1");
+assert.ok(patched[2].patch.end.dateTime);
 
 // 3. stop with actual elapsed → end = start + 90s, open row cleared
-const startIso = created[1].ev.start.dateTime;
-await stopEvent(api, habit, 90);
-assert.equal(patched.length, 2);
-assert.equal(patched[1].id, "evt2");
-const expectedEnd = new Date(new Date(startIso).getTime() + 90 * 1000).toISOString();
-assert.equal(patched[1].patch.end.dateTime, expectedEnd);
+const s4 = new Date(created[3].ev.start.dateTime);
+await stopEvent(api, { id: 7 }, 90);
+assert.equal(patched[3].id, "evt4");
+assert.equal(patched[3].patch.end.dateTime, iso(new Date(s4.getTime() + 90 * 1000)));
 
 // 4. stop with no open event → no-op
 const before = patched.length;
-await stopEvent(api, habit);
+await stopEvent(api, { id: 7 });
 assert.equal(patched.length, before);
 
 // 5. stop of a habit that never started → no-op
 await stopEvent(api, { id: 99 }, 30);
 assert.equal(patched.length, before);
-
-// 6. zero-duration stop → end == start (valid, not in the past)
-await startEvent(api, "cal-main", habit);
-await stopEvent(api, habit, 0);
-const last = patched[patched.length - 1];
-assert.equal(last.patch.end.dateTime, created[2].ev.start.dateTime);
 
 console.log("calendar.test.mjs: all checks passed");

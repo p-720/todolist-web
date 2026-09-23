@@ -162,7 +162,7 @@
       startTime: Date.now(),
       elapsedBefore: 0,
     }));
-    postCalendarEvent({ id: habit.id, description: habit.description }, 'start');
+    postCalendarEvent({ id: habit.id, description: habit.description }, 'start', habit.timer_duration_seconds);
     send({ type: 'timer:update', data: get(timerStore) });
   }
 
