@@ -26,42 +26,41 @@ const api = {
 
 const iso = (d) => d.toISOString();
 
-// 1. start → event created with provisional end, open row recorded
+// 1. start → event created with a 1-minute provisional end, open row recorded
 await startEvent(api, "cal-main", { id: 7, description: "Read book" });
 assert.equal(created.length, 1);
 assert.equal(created[0].cal, "cal-main");
 assert.equal(created[0].ev.summary, "Read book");
 assert.ok(created[0].ev.start.dateTime);
 assert.ok(created[0].ev.end.dateTime);
-assert.ok(new Date(created[0].ev.end.dateTime) > new Date(created[0].ev.start.dateTime));
+assert.equal(
+	new Date(created[0].ev.end.dateTime).getTime() - new Date(created[0].ev.start.dateTime).getTime(),
+	60 * 1000,
+);
 assert.equal(patched.length, 0);
 
-// 1b. provisional honors duration hint
+// 1b. a duration hint is ignored at start (always 1-minute provisional)
 await startEvent(api, "cal-main", { id: 8, description: "Timed" }, 1500);
-const s2 = new Date(created[1].ev.start.dateTime);
-assert.equal(new Date(created[1].ev.end.dateTime).getTime() - s2.getTime(), 1500 * 1000);
+assert.equal(
+	new Date(created[1].ev.end.dateTime).getTime() - new Date(created[1].ev.start.dateTime).getTime(),
+	60 * 1000,
+);
 // zero-elapsed stop → end == start
 await stopEvent(api, { id: 8 });
 assert.equal(patched[0].id, "evt2");
-assert.equal(patched[0].patch.end.dateTime, iso(s2));
-
-// 1c. tiny hint is clamped to the 60s floor
-await startEvent(api, "cal-main", { id: 9, description: "Tiny" }, 5);
-await stopEvent(api, { id: 9 }, 10);
-const s3 = new Date(created[2].ev.start.dateTime);
-assert.equal(new Date(created[2].ev.end.dateTime).getTime() - s3.getTime(), 60 * 1000);
+assert.equal(patched[0].patch.end.dateTime, iso(new Date(created[1].ev.start.dateTime)));
 
 // 2. start habit 7 again without stopping → orphan closed (end patched), new event created
 await startEvent(api, "cal-main", { id: 7, description: "Read book" });
-assert.equal(created.length, 4);
-assert.equal(patched[2].id, "evt1");
-assert.ok(patched[2].patch.end.dateTime);
+assert.equal(created.length, 3);
+assert.equal(patched[1].id, "evt1");
+assert.ok(patched[1].patch.end.dateTime);
 
 // 3. stop with actual elapsed → end = start + 90s, open row cleared
-const s4 = new Date(created[3].ev.start.dateTime);
+const s3 = new Date(created[2].ev.start.dateTime);
 await stopEvent(api, { id: 7 }, 90);
-assert.equal(patched[3].id, "evt4");
-assert.equal(patched[3].patch.end.dateTime, iso(new Date(s4.getTime() + 90 * 1000)));
+assert.equal(patched[2].id, "evt3");
+assert.equal(patched[2].patch.end.dateTime, iso(new Date(s3.getTime() + 90 * 1000)));
 
 // 4. stop with no open event → no-op
 const before = patched.length;

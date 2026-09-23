@@ -182,12 +182,10 @@ export async function startEvent(
 	api: CalendarApi,
 	calendarId: string,
 	habit: { id: number; description: string },
-	provisionalSeconds?: number,
 ) {
 	const now = new Date();
-	// Google requires an end time; use a provisional one until the timer stops
-	const provisional = Math.max(60, provisionalSeconds || 60);
-	const end = new Date(now.getTime() + provisional * 1000);
+	// Google requires an end time; start 1 min out, the ticker grows it, stop patches the real end
+	const end = new Date(now.getTime() + 60 * 1000);
 	const open = getOpen(habit.id);
 	if (open) {
 		// close orphan from a previous run that never stopped
@@ -221,6 +219,30 @@ export async function stopEvent(
 	clearOpen(habit.id);
 }
 
+// --- live ticking: keep the open event's end tracking real time, 1/min ----------
+
+const tickers = new Map<number, ReturnType<typeof setInterval>>();
+
+function stopTicker(habitId: number) {
+	const t = tickers.get(habitId);
+	if (t) clearInterval(t);
+	tickers.delete(habitId);
+}
+
+async function startTicker(api: CalendarApi, calendarId: string, habitId: number, eventId: string) {
+	stopTicker(habitId);
+	tickers.set(
+		habitId,
+		setInterval(async () => {
+			try {
+				await api.patchEvent(calendarId, eventId, { end: { dateTime: new Date().toISOString() } });
+			} catch {
+				// transient; next tick or final stop patch will correct it
+			}
+		}, 60 * 1000),
+	);
+}
+
 // --- best-effort entry point called by the API route --------------------------
 
 export async function handleTimerEvent(
@@ -238,8 +260,14 @@ export async function handleTimerEvent(
 			patchEvent: (cal, id, patch) =>
 				g.events.patch({ calendarId: cal, eventId: id, requestBody: patch }),
 		};
-		if (event === "start") await startEvent(api, prefs.calendarId, habit, durationSeconds);
-		else await stopEvent(api, habit, durationSeconds);
+		if (event === "start") {
+			await startEvent(api, prefs.calendarId, habit);
+			const open = getOpen(habit.id);
+			if (open) await startTicker(api, open.calendar_id, habit.id, open.event_id);
+		} else {
+			stopTicker(habit.id);
+			await stopEvent(api, habit, durationSeconds);
+		}
 		clearError();
 	} catch (e: unknown) {
 		recordError(e instanceof Error ? e.message : String(e));
