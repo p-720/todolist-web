@@ -5,6 +5,15 @@ import { send } from "./sync.js";
 
 export const groupsStore = writable([]);
 
+// fire-and-forget: google latency/errors must never block or break the timer
+export function postCalendarEvent(habit, event, durationSeconds) {
+	fetch(`${base}/api/calendar?action=timer`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ habit, event, durationSeconds }),
+	}).catch(() => {});
+}
+
 export const habitsStore = derived(groupsStore, ($groups) => {
 	return $groups.flatMap((g) => g.habits);
 });
@@ -46,6 +55,7 @@ timerStore.stop = async () => {
 					durationSeconds: elapsed,
 				}),
 			});
+			postCalendarEvent({ id: habit.id, description: habit.description }, "stop", elapsed);
 		} catch (e) {
 			console.error("Failed to save session:", e);
 		}

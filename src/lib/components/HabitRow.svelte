@@ -3,7 +3,7 @@
   import { get } from 'svelte/store';
   import dayjs from 'dayjs';
   import { base } from '$app/paths';
-  import { timerStore, weekDataStore } from '$lib/stores/timer.js';
+  import { timerStore, weekDataStore, postCalendarEvent } from '$lib/stores/timer.js';
   import { send } from '$lib/stores/sync.js';
   import TimeEditor from './TimeEditor.svelte';
   import NumberEditor from './NumberEditor.svelte';
@@ -162,12 +162,14 @@
       startTime: Date.now(),
       elapsedBefore: 0,
     }));
+    postCalendarEvent({ id: habit.id, description: habit.description }, 'start');
     send({ type: 'timer:update', data: get(timerStore) });
   }
 
   async function stopTimer(habit) {
     const elapsed = getElapsed();
     const date = dayjs().format('YYYY-MM-DD');
+    postCalendarEvent({ id: habit.id, description: habit.description }, 'stop', elapsed);
 
     await fetch(`${base}/api/sessions`, {
       method: 'POST',

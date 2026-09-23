@@ -101,6 +101,13 @@ function initSchema(db) {
       sent_on TEXT NOT NULL,
       PRIMARY KEY (subscription_id, sent_on)
     );
+
+    CREATE TABLE IF NOT EXISTS calendar_open_events (
+      habit_id INTEGER PRIMARY KEY,
+      calendar_id TEXT NOT NULL,
+      event_id TEXT NOT NULL,
+      start_iso TEXT NOT NULL
+    );
   `);
 }
 

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { base } from '$app/paths';
+  import { goto } from '$app/navigation';
   import { timerStore } from '$lib/stores/timer.js';
   import { send } from '$lib/stores/sync.js';
 
@@ -11,6 +12,18 @@
   let habits = [];
   let displayText = '0.0 pomodoros';
   let modeBtnText = 'S';
+
+  let calendarConnected = false;
+
+  async function refreshCalendarStatus() {
+    try {
+      const res = await fetch(`${base}/api/calendar`);
+      const s = await res.json();
+      calendarConnected = !!(s.connected && s.calendarId);
+    } catch (e) {
+      calendarConnected = false;
+    }
+  }
 
   let timerInterval = null;
   let completing = false;
@@ -90,10 +103,13 @@
     if (typeof Notification !== 'undefined') {
       notifPermission = Notification.permission;
     }
+    refreshCalendarStatus();
+    document.addEventListener('visibilitychange', refreshCalendarStatus);
     return () => {
       clearInterval(timerInterval);
       tUnsub();
       hUnsub();
+      document.removeEventListener('visibilitychange', refreshCalendarStatus);
     };
   });
 
@@ -188,6 +204,9 @@
   <div class="timer-controls">
     <button class="mode-btn" on:click={toggleMode}>{modeBtnText}</button>
     <button class="notif-btn" on:click={requestNotifPermission} title="Enable notifications">{notifIcon}</button>
+    <button class="notif-btn" on:click={() => goto(`${base}/calendar`)} title="Calendar tracking">
+      <span class="cal-dot" class:cal-on={calendarConnected}>📅</span>
+    </button>
   </div>
 </div>
 
@@ -257,5 +276,12 @@
     background: #454a60;
   }
 
+  .cal-dot {
+    filter: grayscale(1) opacity(0.5);
+  }
+
+  .cal-dot.cal-on {
+    filter: none;
+  }
 
 </style>
