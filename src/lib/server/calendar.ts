@@ -136,6 +136,17 @@ export async function listCalendars(): Promise<Array<{ id: string; summary: stri
 	return (res.data.items || []).map((c) => ({ id: c.id!, summary: c.summary || c.id! }));
 }
 
+export async function recentEvents(calendarId: string, limit = 5) {
+	const g = await buildApi();
+	const res = await g.calendar.events.list({ calendarId, maxResults: limit, orderBy: "startTime" });
+	return (res.data.items || []).map((e) => ({
+		id: e.id,
+		summary: e.summary,
+		start: e.start?.dateTime || null,
+		end: e.end?.dateTime || null,
+	}));
+}
+
 export async function selectCalendar(id: string, name?: string) {
 	const p = loadPrefs();
 	p.calendarId = id;

@@ -6,6 +6,8 @@ import {
 	getStatus,
 	handleTimerEvent,
 	listCalendars,
+	loadPrefs,
+	recentEvents,
 	saveCreds,
 	selectCalendar,
 } from "$lib/server/calendar";
@@ -25,6 +27,17 @@ export const GET = (async ({ url }) => {
 			return json({ calendars: await listCalendars() });
 		} catch (e) {
 			return json({ calendars: null, error: msg(e) }, { status: 502 });
+		}
+	}
+
+	if (url.searchParams.get("events")) {
+		const p = loadPrefs();
+		if (!p.calendarId) return json({ events: null, reason: "no calendar selected" }, { status: 400 });
+		const limit = Math.min(10, Math.max(1, Number(url.searchParams.get("limit")) || 5));
+		try {
+			return json({ events: await recentEvents(p.calendarId, limit) });
+		} catch (e) {
+			return json({ events: null, error: msg(e) }, { status: 502 });
 		}
 	}
 
