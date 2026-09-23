@@ -27,12 +27,31 @@ export const weekDataStore = writable([]); // { habitId: [ { date, duration_seco
 
 export const timerStore = writable({
 	activeHabitId: null,
+	name: null,
 	mode: "stopwatch",
 	elapsed: 0,
 	running: false,
 	startTime: null,
 	elapsedBefore: 0,
 });
+
+// Ad-hoc timer: not a habit, no session row — calendar only (pseudo id -1,
+// truthy so the route's `if (!habit?.id)` guard passes; no real habit has id -1).
+timerStore.startQuick = (name) => {
+	const trimmed = (name || "").trim();
+	if (!trimmed) return;
+	timerStore.update(v => ({
+		...v,
+		activeHabitId: null,
+		name: trimmed,
+		elapsed: 0,
+		running: true,
+		startTime: Date.now(),
+		elapsedBefore: 0,
+	}));
+	postCalendarEvent({ id: -1, description: trimmed }, "start");
+	send({ type: "timer:update", data: get(timerStore) });
+};
 
 timerStore.stop = async () => {
 	const state = get(timerStore);
@@ -42,8 +61,10 @@ timerStore.stop = async () => {
 		? Math.floor((Date.now() - state.startTime) / 1000) + state.elapsedBefore
 		: state.elapsedBefore || 0;
 
+	// Quick task: no habit, no session — calendar stop only.
+	const isQuick = state.activeHabitId == null && !!state.name;
 	const habits = get(habitsStore);
-	const habit = habits.find((h) => h.id === state.activeHabitId);
+	const habit = isQuick ? null : habits.find((h) => h.id === state.activeHabitId);
 	if (habit) {
 		try {
 			await fetch(`${base}/api/sessions`, {
@@ -59,10 +80,13 @@ timerStore.stop = async () => {
 		} catch (e) {
 			console.error("Failed to save session:", e);
 		}
+	} else if (isQuick) {
+		postCalendarEvent({ id: -1, description: state.name }, "stop", elapsed);
 	}
 
 	timerStore.set({
 		activeHabitId: null,
+		name: null,
 		mode: state.mode,
 		elapsed: 0,
 		running: false,
@@ -70,7 +94,9 @@ timerStore.stop = async () => {
 		elapsedBefore: 0,
 	});
 	send({ type: "timer:update", data: get(timerStore) });
-	send({ type: "sessions:update" });
-	window.dispatchEvent(new CustomEvent("sync:sessions"));
+	if (habit) {
+		send({ type: "sessions:update" });
+		window.dispatchEvent(new CustomEvent("sync:sessions"));
+	}
 	return elapsed;
 };

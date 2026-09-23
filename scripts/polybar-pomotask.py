@@ -43,6 +43,8 @@ def format_timer(state):
     mode = state.get("mode", "stopwatch")
     start_time = state.get("startTime")
     elapsed_before = state.get("elapsedBefore", 0)
+    # Quick-task timers carry a name (habit timers: no name, unchanged output)
+    prefix = f"{state['name']} " if state.get("name") else ""
 
     if start_time:
         elapsed = int((time.time() * 1000 - start_time) / 1000) + elapsed_before
@@ -53,11 +55,11 @@ def format_timer(state):
         remaining = max(0, POMODORO_DURATION - elapsed)
         mins = remaining // 60
         secs = remaining % 60
-        return f"\U0001F345 {mins:02d}:{secs:02d}"
+        return f"{prefix}\U0001F345 {mins:02d}:{secs:02d}"
     else:
         mins = elapsed // 60
         secs = elapsed % 60
-        return f"\U000023F0 {mins}m {secs}s"
+        return f"{prefix}\U000023F0 {mins}m {secs}s"
 
 
 def tail_mode():

@@ -249,11 +249,16 @@
   $: isActiveRow = habit.habit_type === 'timer' && activeTimer?.activeHabitId === habit.id && activeTimer?.running;
   $: rowClass = isActiveRow ? 'habit-row active' : 'habit-row';
 
+  // One active timer at a time: while another (habit or quick task) runs, this row's start is blocked.
+  $: otherTimerRunning = activeTimer?.running && activeTimer.activeHabitId !== habit.id;
+
   $: liveLabel = isActiveRow ? formatDuration(getElapsed()) : '';
 
   async function toggleTimerFromHeader() {
     if (activeTimer && activeTimer.activeHabitId === habit.id && activeTimer.running) {
       await stopTimer(habit);
+    } else if (otherTimerRunning) {
+      return;
     } else {
       startTimer(habit);
     }
@@ -266,7 +271,7 @@
   <div class="habit-header">
     <span class="habit-desc">{habit.description}</span>
     {#if habit.habit_type === 'timer'}
-      <button class="edit-btn" on:click={toggleTimerFromHeader} aria-label="Start/stop timer">{playLabel}</button>
+      <button class="edit-btn" class:dimmed={otherTimerRunning} on:click={toggleTimerFromHeader} aria-label="Start/stop timer">{playLabel}</button>
     {/if}
     <button class="edit-btn" on:click={() => onEdit?.(habit)} aria-label="Edit habit">✏️</button>
     <button class="edit-btn delete-btn" on:click={() => onArchive?.(habit)} aria-label="Delete habit">🗑</button>
@@ -397,6 +402,15 @@
 
   .edit-btn:hover {
     color: #cdd6f4;
+  }
+
+  .edit-btn.dimmed {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .edit-btn.dimmed:hover {
+    color: #6c7086;
   }
 
   .circles-row {

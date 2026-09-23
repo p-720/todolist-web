@@ -5,6 +5,7 @@
   import { goto } from '$app/navigation';
   import { timerStore } from '$lib/stores/timer.js';
   import { send } from '$lib/stores/sync.js';
+  import QuickTaskDialog from './QuickTaskDialog.svelte';
 
   export let habitsStore;
 
@@ -12,6 +13,7 @@
   let habits = [];
   let displayText = '0.0 pomodoros';
   let modeBtnText = 'S';
+  let showQuickDialog = false;
 
   let calendarConnected = false;
 
@@ -86,9 +88,10 @@
 
     if (!wasRunning && v.running) {
       const habit = habits.find(h => h.id === v.activeHabitId);
-      if (habit) {
+      const label = habit ? habit.description : v.name;
+      if (label) {
         showNotif('PomoTasker', {
-          body: `Timer started: ${habit.description}`,
+          body: `Timer started: ${label}`,
           icon: `${base}/icons/icon-192.png`,
           tag: 'timer-start',
         });
@@ -119,8 +122,9 @@
       return;
     }
 
-    const habit = habits.find(h => h.id === activeTimer.activeHabitId);
-    if (!habit) return;
+    const isQuick = activeTimer.activeHabitId == null && !!activeTimer.name;
+    const habit = isQuick ? null : habits.find(h => h.id === activeTimer.activeHabitId);
+    if (!habit && !isQuick) return;
 
     const elapsed = getElapsed();
 
@@ -151,11 +155,24 @@
 
   async function stopTimer() {
     if (!activeTimer) return;
-    const habit = habits.find(h => h.id === activeTimer.activeHabitId);
+    const habit = activeTimer.activeHabitId != null ? habits.find(h => h.id === activeTimer.activeHabitId) : null;
+    const quickName = activeTimer.activeHabitId == null ? activeTimer.name : null;
     const elapsed = await timerStore.stop();
     if (habit) {
       showStopNotif(habit, elapsed);
+    } else if (quickName) {
+      showStopNotif({ description: quickName }, elapsed);
     }
+  }
+
+  function openQuickDialog() {
+    if (activeTimer?.running) return;
+    showQuickDialog = true;
+  }
+
+  function startQuickTask(e) {
+    showQuickDialog = false;
+    timerStore.startQuick(e.detail?.name);
   }
 
   function toggleMode() {
@@ -189,8 +206,9 @@
     return '🔔?';
   })();
   $: isActive = activeTimer?.running;
-  $: activeHabitName = activeTimer?.activeHabitId
-    ? habits.find(h => h.id === activeTimer.activeHabitId)?.description || ''
+  $: isQuickRunning = isActive && activeTimer?.activeHabitId == null && !!activeTimer.name;
+  $: activeHabitName = activeTimer
+    ? activeTimer.name || (activeTimer.activeHabitId ? habits.find(h => h.id === activeTimer.activeHabitId)?.description || '' : '')
     : '';
 </script>
 
@@ -202,13 +220,23 @@
     <span class="timer-text">{displayText}</span>
   </div>
   <div class="timer-controls">
+    {#if isQuickRunning}
+      <button class="mode-btn stop-btn" on:click={stopTimer}>⏹ stop</button>
+    {/if}
     <button class="mode-btn" on:click={toggleMode}>{modeBtnText}</button>
     <button class="notif-btn" on:click={requestNotifPermission} title="Enable notifications">{notifIcon}</button>
+    <button class="notif-btn quick-btn" class:dimmed={activeTimer?.running} on:click={openQuickDialog} title="Quick task timer — not added to habits">
+      ⚡
+    </button>
     <button class="notif-btn" on:click={() => goto(`${base}/calendar`)} title="Calendar tracking">
       <span class="cal-dot" class:cal-on={calendarConnected}>📅</span>
     </button>
   </div>
 </div>
+
+{#if showQuickDialog}
+  <QuickTaskDialog on:close={() => showQuickDialog = false} on:started={startQuickTask} />
+{/if}
 
 <style>
   .timer-banner {
@@ -274,6 +302,21 @@
 
   .notif-btn:hover {
     background: #454a60;
+  }
+
+  .notif-btn.dimmed {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .stop-btn {
+    background: #f38ba8;
+    border: 1px solid #f38ba8;
+    color: #1e1e2e;
+  }
+
+  .stop-btn:hover {
+    background: #f5a3bb;
   }
 
   .cal-dot {
