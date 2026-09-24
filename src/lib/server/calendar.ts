@@ -164,17 +164,23 @@ async function buildApi(userId: number) {
 	const row = credRow(userId);
 	const auth = getAuthClient(userId);
 	if (!auth) throw new Error("not connected to google");
-	const access = await auth.getAccessToken();
-	if (!access) throw new Error("google token invalid (reconnect)");
+	// this googleapis version: getAccessToken() -> Promise<{token, res}>
+	const { token } = await auth.getAccessToken();
+	if (!token) throw new Error("google token invalid (reconnect)");
 	// persist refreshed tokens so a restart doesn't lose a live session
+	const creds = auth.credentials as {
+		access_token?: string;
+		refresh_token?: string | null;
+		expiry_date?: number;
+	} | undefined;
 	const stored = row?.token ? JSON.parse(row.token) : {};
-	if (stored.access_token !== auth.getAccessToken()) {
+	if (stored.access_token !== creds?.access_token) {
 		writeCred({
 			...(row ?? EMPTY_ROW(userId)),
 			token: JSON.stringify({
-				access_token: auth.getAccessToken(),
-				refresh_token: auth.getRefreshToken() || null,
-				expiry_date: auth.getExpirationTime(),
+				access_token: creds?.access_token,
+				refresh_token: creds?.refresh_token ?? stored.refresh_token ?? null,
+				expiry_date: creds?.expiry_date,
 			}),
 		});
 	}
