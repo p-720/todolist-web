@@ -44,7 +44,7 @@
     <label>
       <span>Username (3–32 chars)</span>
       <input class="field" bind:value={username} autocomplete="username" required autofocus
-        pattern="[a-zA-Z0-9_.\-]{3,32}" />
+        pattern={'[a-zA-Z0-9_.\\-]{3,32}'} />
     </label>
     <label>
       <span>Password (min 8 chars)</span>
