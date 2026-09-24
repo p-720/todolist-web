@@ -34,14 +34,25 @@
     return { startDate: monday.format('YYYY-MM-DD'), endDate: sunday.format('YYYY-MM-DD') };
   }
 
+  let loadAttempts = 0;
   async function loadData() {
     const { startDate, endDate } = getWeekRange();
-    const [treeRes, data] = await Promise.all([
-      fetch(`${base}/api/habits`).then(r => r.json()),
-      fetch(`${base}/api/sessions?type=weekdata&startDate=${startDate}&endDate=${endDate}`).then(r => r.json()),
-    ]);
-    weekDataStore.set(data.rows);
-    groupsStore.set(treeRes);
+    try {
+      const [tree, week] = await Promise.all([
+        fetch(`${base}/api/habits`).then(r => r.ok ? r.json() : Promise.reject(new Error('habits ' + r.status))),
+        fetch(`${base}/api/sessions?type=weekdata&startDate=${startDate}&endDate=${endDate}`).then(r => r.ok ? r.json() : Promise.reject(new Error('sessions ' + r.status))),
+      ]);
+      loadAttempts = 0;
+      weekDataStore.set(week.rows);
+      groupsStore.set(tree);
+    } catch (err) {
+      // The server may be restarting (deploy, boot-time migration) right
+      // after login: retry with backoff instead of leaving the tab gray
+      // until a manual refresh. Previous good data stays put on failure.
+      loadAttempts = Math.min(loadAttempts + 1, 3);
+      console.error(`loadData failed (attempt ${loadAttempts}):`, err);
+      if (loadAttempts < 3) setTimeout(loadData, [2000, 5000, 10000][loadAttempts - 1]);
+    }
   }
 
   function openAddDialog() {

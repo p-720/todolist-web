@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import dayjs from 'dayjs';
   import { base } from '$app/paths';
+  import { goto } from '$app/navigation';
+  import { logout } from '$lib/stores/auth.js';
   import { hideCompletedStore, weekDataStore } from '$lib/stores/timer.js';
   import HabitRow from './HabitRow.svelte';
 
@@ -294,6 +296,11 @@
     await refresh();
   }
 
+  async function signOut() {
+    await logout();
+    goto(`${base}/login`);
+  }
+
   $: visibleGroups = groups.map(g => {
     const visibleHabits = (hideCompleted && completedLoaded)
       ? g.habits.filter(h => !completedIds[h.id])
@@ -317,6 +324,9 @@
           </button>
           <button class="archive-toggle" on:click={toggleShowArchived}>
             📁 Show archived
+          </button>
+          <button class="archive-toggle" on:click={signOut} aria-label="Sign out">
+            ⏻ Sign out
           </button>
         </div>
       {:else}
