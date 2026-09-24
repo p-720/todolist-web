@@ -31,14 +31,23 @@ function getHabitByGoalId(goalId) {
 
 // Per-user live state. A user's clients (browser PWA, Android WebView,
 // desktop PWA) all share one logical timer, keyed by user id.
-const stateByUser = new Map(); // userId -> { user, timer, lastHabitId, lastSessionId }
+const STOPPED = {
+	activeHabitId: null,
+	name: null,
+	mode: "stopwatch",
+	elapsed: 0,
+	running: false,
+	startTime: null,
+	elapsedBefore: 0,
+};
+const stateByUser = new Map(); // userId -> { user, timer, lastHabitId, lastSessionId, snapshot }
 // userId -> Set<WebSocket>
 const connections = new Map();
 
 function getState(user) {
 	let st = stateByUser.get(user.id);
 	if (!st) {
-		st = { user, timer: null, lastHabitId: null, lastSessionId: null };
+		st = { user, timer: null, lastHabitId: null, lastSessionId: null, snapshot: { ...STOPPED } };
 		stateByUser.set(user.id, st);
 	}
 	return st;
@@ -60,14 +69,20 @@ function handleMessage(ws, user, msg) {
 		return;
 	}
 
-	// Track the live timer for notification routing. The frontend protocol
-	// sends { type: "timer:update", data: <timer store state> } — we only need
-	// activeHabitId/running out of it.
+	// Keep the persistent snapshot (like the pre-auth server did): a client
+	// that reconnects later (tab refresh, app backgrounded) is synced this
+	// state on connect, so a running timer survives reloads.
 	if (msg.type === "timer:update") {
 		const d = msg.data || {};
+		state.snapshot = { ...state.snapshot, ...d };
 		state.timer = d.running && d.activeHabitId ? { running: true, habitId: d.activeHabitId } : null;
 		state.lastHabitId = d.activeHabitId ?? null;
 	} else if (msg.type === "timer:stop") {
+		// A bare `timer:stop` (rofi / polybar / phone picker) carries no data.
+		// Normalize to a full stopped state: otherwise the snapshot stays
+		// "running" forever when no web client is connected to echo the stop,
+		// and every new client is synced a stale running timer.
+		state.snapshot = { ...STOPPED, ...(msg.data || {}) };
 		state.timer = null;
 	}
 
@@ -119,13 +134,16 @@ export function initWebSocket(server, basePath = "/pomotask") {
 		if (!connections.has(user.id)) connections.set(user.id, new Set());
 		connections.get(user.id).add(ws);
 
-		// Send this user's current state to the new client
+		// Sync the new client with this user's current timer (the frontend
+		// restores its store from timer:sync).
 		const state = stateByUser.get(user.id);
-		ws.send(JSON.stringify({
-			type: "init",
-			user: user.username,
-			timer: state?.timer ?? null,
-		}));
+		ws.send(
+			JSON.stringify({
+				type: "timer:sync",
+				data: state ? { ...state.snapshot } : { ...STOPPED },
+				user: user.username,
+			}),
+		);
 
 		ws.on("message", (data) => {
 			try {
