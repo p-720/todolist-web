@@ -26,9 +26,18 @@ function getDb() {
 		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 		db = new Database(dbPath);
 		db.pragma("journal_mode = WAL");
+		// users first: the tick below queries it, and this module may boot
+		// before the SvelteKit bundle has created anything on a fresh db.
 		db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS goals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         title TEXT NOT NULL,
         description TEXT NOT NULL DEFAULT '',
         due_date TEXT NOT NULL,
@@ -42,10 +51,12 @@ function getDb() {
       );
       CREATE TABLE IF NOT EXISTS push_subscriptions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        endpoint TEXT NOT NULL UNIQUE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        endpoint TEXT NOT NULL,
         keys_json TEXT NOT NULL,
         tz_offset_minutes INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        UNIQUE (user_id, endpoint)
       );
       CREATE TABLE IF NOT EXISTS goal_reminders (
         goal_id INTEGER NOT NULL,
@@ -66,6 +77,9 @@ function getDb() {
 // CREATE TABLE IF NOT EXISTS doesn't add columns to pre-existing dbs.
 function migrateGoals(d) {
 	const cols = d.prepare("PRAGMA table_info(goals)").all();
+	if (!cols.some((c) => c.name === "user_id")) {
+		d.exec("ALTER TABLE goals ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0 REFERENCES users(id) ON DELETE CASCADE");
+	}
 	if (!cols.some((c) => c.name === "type")) {
 		d.exec("ALTER TABLE goals ADD COLUMN type TEXT NOT NULL DEFAULT 'text'");
 	}
@@ -73,6 +87,29 @@ function migrateGoals(d) {
 		if (!d.prepare("PRAGMA table_info(goals)").all().some((c) => c.name === col)) {
 			d.exec(`ALTER TABLE goals ADD COLUMN ${col} INTEGER`);
 		}
+	}
+	// push_subscriptions: per-user scoping (column added by db.ts for the app;
+	// kept here so this module's schema copy never lags behind).
+	const subCols = d.prepare("PRAGMA table_info(push_subscriptions)").all();
+	if (!subCols.some((c) => c.name === "user_id")) {
+		d.exec("ALTER TABLE push_subscriptions ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0 REFERENCES users(id) ON DELETE CASCADE");
+	}
+	// goal_reminders: dedupe must be per-subscription now (a goal can be
+	// overdue for several users). Rebuild the table if the old PK lingers.
+	const grCols = d.prepare("PRAGMA table_info(goal_reminders)").all();
+	if (!grCols.some((c) => c.name === "subscription_id")) {
+		d.exec(`
+			CREATE TABLE goal_reminders_new (
+				goal_id INTEGER NOT NULL,
+				subscription_id INTEGER NOT NULL DEFAULT 0,
+				sent_on TEXT NOT NULL,
+				PRIMARY KEY (goal_id, subscription_id, sent_on)
+			);
+			INSERT INTO goal_reminders_new (goal_id, subscription_id, sent_on)
+				SELECT goal_id, 0, sent_on FROM goal_reminders;
+			DROP TABLE goal_reminders;
+			ALTER TABLE goal_reminders_new RENAME TO goal_reminders;
+		`);
 	}
 }
 
@@ -195,55 +232,70 @@ function sendPush(subscription, payload) {
 
 export function runGoalReminderTick(nowMs = Date.now()) {
 	const d = getDb();
+	const owner = d.prepare("SELECT MIN(id) AS id FROM users").get()?.id ?? 0;
+	// Pre-v2 dbs: this module's ALTER may have run before db.ts backfilled
+	// user_ids (reminder init fires on boot, db.ts on first request). Backfill
+	// to the first user here too — cheap and idempotent.
+	d.prepare("UPDATE goals SET user_id = ? WHERE user_id IS NULL").run(owner);
+	d.prepare("UPDATE push_subscriptions SET user_id = ? WHERE user_id IS NULL").run(owner);
 	const goals = d.prepare("SELECT * FROM goals WHERE status = 'active'").all();
 	const subs = d.prepare("SELECT * FROM push_subscriptions").all();
 
 	const sent = [];
 
-	// 1. Daily digest: all active goals, one per line
-	for (const job of computeDigestJobs(goals, subs, nowMs)) {
-		const already = d
-			.prepare("SELECT 1 FROM digest_reminders WHERE subscription_id = ? AND sent_on = ?")
-			.get(job.sub.id, job.localDate);
-		if (already) continue;
-		const payload = JSON.stringify({
-			title: `Goals — ${job.lines.length} active`,
-			body: job.lines.join("\n"),
-			digest: true,
-		});
-		const subObj = { endpoint: job.sub.endpoint, keys: JSON.parse(job.sub.keys_json) };
-		if (sendPush(subObj, payload)) {
-			d.prepare(
-				"INSERT OR IGNORE INTO digest_reminders (subscription_id, sent_on) VALUES (?, ?)",
-			).run(job.sub.id, job.localDate);
-			sent.push(job);
+	// 1. Daily digest: all of the sub's OWN active goals, one per line
+	for (const sub of subs) {
+		const subGoals = goals.filter((g) => g.user_id === sub.user_id);
+		for (const job of computeDigestJobs(subGoals, [sub], nowMs)) {
+			const already = d
+				.prepare("SELECT 1 FROM digest_reminders WHERE subscription_id = ? AND sent_on = ?")
+				.get(job.sub.id, job.localDate);
+			if (already) continue;
+			const payload = JSON.stringify({
+				title: `Goals — ${job.lines.length} active`,
+				body: job.lines.join("\n"),
+				digest: true,
+				user: usernameOf(d, sub.user_id),
+			});
+			const subObj = { endpoint: job.sub.endpoint, keys: JSON.parse(job.sub.keys_json) };
+			if (sendPush(subObj, payload)) {
+				d.prepare(
+					"INSERT OR IGNORE INTO digest_reminders (subscription_id, sent_on) VALUES (?, ?)",
+				).run(job.sub.id, job.localDate);
+				sent.push(job);
+			}
 		}
-	}
 
-	// 2. Individual action notifications for overdue goals
-	for (const job of computeReminderJobs(goals, subs, nowMs)) {
-		const already = d
-			.prepare("SELECT 1 FROM goal_reminders WHERE goal_id = ? AND sent_on = ?")
-			.get(job.goal.id, job.localDate);
-		if (already) continue;
-		const body =
-			job.goal.type === "numbered"
-				? numberedOverdueBody(job.goal)
-				: `Overdue since ${job.goal.due_date} — act on it today`;
-		const payload = JSON.stringify({
-			title: job.goal.title,
-			body,
-			goalId: job.goal.id,
-		});
-		const subObj = { endpoint: job.sub.endpoint, keys: JSON.parse(job.sub.keys_json) };
-		if (sendPush(subObj, payload)) {
-			d.prepare(
-				"INSERT OR IGNORE INTO goal_reminders (goal_id, sent_on) VALUES (?, ?)",
-			).run(job.goal.id, job.localDate);
-			sent.push(job);
+		// 2. Individual action notifications for the sub's OWN overdue goals
+		for (const job of computeReminderJobs(subGoals, [sub], nowMs)) {
+			const already = d
+				.prepare("SELECT 1 FROM goal_reminders WHERE goal_id = ? AND subscription_id = ? AND sent_on = ?")
+				.get(job.goal.id, job.sub.id, job.localDate);
+			if (already) continue;
+			const body =
+				job.goal.type === "numbered"
+					? numberedOverdueBody(job.goal)
+					: `Overdue since ${job.goal.due_date} — act on it today`;
+			const payload = JSON.stringify({
+				title: job.goal.title,
+				body,
+				goalId: job.goal.id,
+				user: usernameOf(d, sub.user_id),
+			});
+			const subObj = { endpoint: job.sub.endpoint, keys: JSON.parse(job.sub.keys_json) };
+			if (sendPush(subObj, payload)) {
+				d.prepare(
+					"INSERT OR IGNORE INTO goal_reminders (goal_id, subscription_id, sent_on) VALUES (?, ?, ?)",
+				).run(job.goal.id, job.sub.id, job.localDate);
+				sent.push(job);
+			}
 		}
 	}
 	return sent;
+}
+
+function usernameOf(d, userId) {
+	return d.prepare("SELECT username FROM users WHERE id = ?").get(userId)?.username ?? null;
 }
 
 export function initGoalReminders() {

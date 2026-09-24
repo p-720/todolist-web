@@ -22,3 +22,9 @@ APP_URL=http://localhost:5173/pomotask /run/current-system/sw/bin/playwright tes
 - Dev server runs on `http://localhost:5173/pomotask` (SvelteKit base path)
 - `find`/`grep` banned. Use `fd`/`rg` only.
 
+## Android app
+
+The Android app is a SEPARATE native Kotlin project at `/mnt/new/todolist-android`
+(package `com.pomotasker.phone`, okhttp-based, talks to this app's API/WS).
+This repo is the web server / PWA only — there is NO Capacitor here.
+

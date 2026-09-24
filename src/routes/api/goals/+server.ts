@@ -1,12 +1,14 @@
 import { json } from "@sveltejs/kit";
-import { addGoal, deletePushSubscription, getGoals, savePushSubscription } from "$lib/server/db";
-import { getVapidPublicKey } from "$lib/server/vapid";
+import { addGoal, getGoals } from "$lib/server/db";
+import { requireUser } from "$lib/server/auth";
 
-export function GET() {
-	return json(getGoals());
+export async function GET({ request }) {
+	const user = await requireUser(request);
+	return json(getGoals(user.id));
 }
 
 export async function POST({ request }) {
+	const user = await requireUser(request);
 	const body = await request.json();
 	if (body.title === undefined) {
 		return json({ error: "missing title" }, { status: 400 });
@@ -22,6 +24,7 @@ export async function POST({ request }) {
 		return json({ error: "start and target must be integers" }, { status: 400 });
 	}
 	const id = addGoal(
+		user.id,
 		body.title,
 		body.description ?? "",
 		body.dueDate,

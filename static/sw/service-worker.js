@@ -24,32 +24,44 @@ self.addEventListener('push', (e) => {
   try {
     data = e.data ? e.data.json() : {};
   } catch (err) {}
-  if (data.digest) {
-    e.waitUntil(
-      self.registration.showNotification(data.title || 'Goals', {
-        body: data.body || '',
-        icon: `${BASE}/icons/icon-192.png`,
-        tag: 'goals-digest',
-        data: { digest: true },
-        vibrate: [100, 50, 100],
-      }),
-    );
-    return;
-  }
+
+  // Drop notifications that are not for the user logged into this device
+  // (push subs are per-user now; the server stamps each payload with `user`).
   e.waitUntil(
-    self.registration.showNotification(data.title || 'PomoTasker', {
+    fetch(`${BASE}/api/auth`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((me) => {
+        if (!me || !me.authenticated) return;
+        if (data.user && me.username !== data.user) return;
+        show(data);
+      })
+      .catch(() => {}),
+  );
+});
+
+function show(data) {
+  if (data.digest) {
+    self.registration.showNotification(data.title || 'Goals', {
       body: data.body || '',
       icon: `${BASE}/icons/icon-192.png`,
-      tag: `goal-${data.goalId || 'x'}`,
-      data: { goalId: data.goalId },
+      tag: 'goals-digest',
+      data: { digest: true },
       vibrate: [100, 50, 100],
-      actions: [
-        { action: 'complete', title: '✓ Complete' },
-        { action: 'update', title: '✎ Update' },
-        { action: 'archive', title: '🗄 Archive' },
-      ],
-    }),
-  );
+    });
+    return;
+  }
+  self.registration.showNotification(data.title || 'PomoTasker', {
+    body: data.body || '',
+    icon: `${BASE}/icons/icon-192.png`,
+    tag: `goal-${data.goalId || 'x'}`,
+    data: { goalId: data.goalId },
+    vibrate: [100, 50, 100],
+    actions: [
+      { action: 'complete', title: '✓ Complete' },
+      { action: 'update', title: '✎ Update' },
+      { action: 'archive', title: '🗄 Archive' },
+    ],
+  });
 });
 
 async function goalAction(goalId, action) {

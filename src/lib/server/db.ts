@@ -5,6 +5,13 @@ import path from "path";
 const dbPath = path.join(process.cwd(), "data", "pomotasker.db");
 let db;
 
+// Default user migrated from the pre-auth single-user DB. Hash of the
+// original password (scrypt) — the password itself never lives in code.
+// Only ever used when the users table is empty (first boot of an old DB).
+const P720_USERNAME = "p720";
+const P720_HASH =
+	"s2$16384$8$1$as1DXgwaIF8HZowDSTxRAA==$m3I7R8FrwNRtRZnf+J+LcB8flwI/AImc4fenyAB/uwEACuMnYVoBqh1Zoi3ByUd1etBtl0dgHlBy8qlQZhii7Q==";
+
 export function getDb() {
 	if (!db) {
 		const dbDir = path.dirname(dbPath);
@@ -17,23 +24,48 @@ export function getDb() {
 		migrateGroups(db);
 		migrateArchive(db);
 		migrateGoalType(db);
+		migrateAuth(db);
 	}
 	return db;
 }
 
 function initSchema(db) {
 	db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      key_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS groups (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
+      user_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
       icon TEXT,
       color TEXT,
       order_index INTEGER NOT NULL DEFAULT 0,
-      collapsed INTEGER NOT NULL DEFAULT 0
+      collapsed INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(user_id, name)
     );
 
     CREATE TABLE IF NOT EXISTS habits (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
       description TEXT NOT NULL,
       order_index INTEGER NOT NULL DEFAULT 0,
       timer_duration_seconds INTEGER NOT NULL DEFAULT 1500,
@@ -57,19 +89,24 @@ function initSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_sessions_habit_date ON sessions(habit_id, date);
 
     CREATE TABLE IF NOT EXISTS notes (
-      date TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      date TEXT NOT NULL,
       content TEXT NOT NULL DEFAULT '',
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, date)
     );
 
     CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      key TEXT NOT NULL,
       value TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, key)
     );
 
     CREATE TABLE IF NOT EXISTS goals (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
       title TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       due_date TEXT NOT NULL,
@@ -84,6 +121,7 @@ function initSchema(db) {
 
     CREATE TABLE IF NOT EXISTS push_subscriptions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
       endpoint TEXT NOT NULL UNIQUE,
       keys_json TEXT NOT NULL,
       tz_offset_minutes INTEGER NOT NULL DEFAULT 0,
@@ -109,6 +147,151 @@ function initSchema(db) {
       start_iso TEXT NOT NULL
     );
   `);
+}
+
+// --- Auth migration (one-shot, transactional, marker-gated) ------------------
+// Runs when an old single-user DB is upgraded: creates users/api_keys, seeds
+// p720, adds user_id to every user-scoped table and backfills all existing
+// rows to p720. sessions inherit ownership through habits (no column).
+
+function hasCol(table, col) {
+	return db
+		.prepare(`PRAGMA table_info(${table})`)
+		.all()
+		.some((c) => c.name === col);
+}
+
+function metaGet(key) {
+	return db.prepare("SELECT value FROM meta WHERE key = ?").get(key)?.value;
+}
+
+function migrateAuth(db_) {
+	if (metaGet("schema_version") === "2") return;
+
+	db.exec("BEGIN");
+	try {
+		// The first registered user owns the legacy data (in a fresh
+		// deploy that's p720, seeded below when no users exist yet).
+		let ownerId = db
+			.prepare("SELECT MIN(id) as id FROM users")
+			.get()?.id;
+		if (!ownerId) {
+			ownerId = db
+					.prepare(
+						"INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+					)
+					.run(
+						P720_USERNAME,
+						P720_HASH,
+						"2026-01-01 00:00:00",
+					)
+					.lastInsertRowid;
+		}
+
+		// groups: old UNIQUE(name) is a table constraint -> rebuild
+		if (!hasCol("groups", "user_id")) {
+			db.exec(`
+          CREATE TABLE groups_mig (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            icon TEXT,
+            color TEXT,
+            order_index INTEGER NOT NULL DEFAULT 0,
+            collapsed INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(user_id, name)
+          );`);
+			db
+				.prepare(
+					`INSERT INTO groups_mig (id, user_id, name, icon, color, order_index, collapsed)
+               SELECT id, ?, name, icon, color, order_index, collapsed FROM groups`,
+				)
+				.run(ownerId);
+			db.exec("DROP TABLE groups; ALTER TABLE groups_mig RENAME TO groups;");
+		}
+		db.exec(`UPDATE groups SET user_id = ? WHERE user_id IS NULL`, ownerId);
+		if (hasCol("habits", "user_id")) {
+			// already migrated columns — still backfill any NULLs defensively
+			db.exec(`UPDATE habits SET user_id = ? WHERE user_id IS NULL`, ownerId);
+		} else {
+			db.exec("ALTER TABLE habits ADD COLUMN user_id INTEGER");
+			db.exec(`UPDATE habits SET user_id = ?`, ownerId);
+		}
+
+		// notes: old PK (date) -> (user_id, date)
+		const notesPk = db
+			.prepare(`PRAGMA table_info(notes)`)
+			.all()
+			.filter((c) => c.pk > 0)
+			.map((c) => c.name)
+			.join(",");
+		if (notesPk !== "user_id,date") {
+			if (!hasCol("notes", "user_id")) {
+				db.exec("ALTER TABLE notes ADD COLUMN user_id INTEGER");
+			}
+			db.exec(`
+        CREATE TABLE notes_mig (
+          user_id INTEGER NOT NULL,
+          date TEXT NOT NULL,
+          content TEXT NOT NULL DEFAULT '',
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, date)
+        );
+        INSERT INTO notes_mig (user_id, date, content, updated_at)
+          SELECT ?, date, content, updated_at FROM notes;
+        DROP TABLE notes;
+        ALTER TABLE notes_mig RENAME TO notes;
+      `);
+		}
+
+		// settings: old PK (key) -> (user_id, key)
+		const settingsPk = db
+			.prepare(`PRAGMA table_info(settings)`)
+			.all()
+			.filter((c) => c.pk > 0)
+			.map((c) => c.name)
+			.join(",");
+		if (settingsPk !== "user_id,key") {
+			if (!hasCol("settings", "user_id")) {
+				db.exec("ALTER TABLE settings ADD COLUMN user_id INTEGER");
+			}
+			db.exec(`
+        CREATE TABLE settings_mig (
+          user_id INTEGER NOT NULL,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, key)
+        );
+        INSERT INTO settings_mig (user_id, key, value, updated_at)
+          SELECT ?, key, value, updated_at FROM settings;
+        DROP TABLE settings;
+        ALTER TABLE settings_mig RENAME TO settings;
+      `);
+		}
+
+		// goals, push_subscriptions: add column + backfill
+		if (!hasCol("goals", "user_id")) {
+			db.exec("ALTER TABLE goals ADD COLUMN user_id INTEGER");
+		}
+		db.exec(`UPDATE goals SET user_id = ? WHERE user_id IS NULL OR user_id = 0`, ownerId);
+		if (!hasCol("push_subscriptions", "user_id")) {
+			db.exec("ALTER TABLE push_subscriptions ADD COLUMN user_id INTEGER");
+		}
+		db.exec(
+			`UPDATE push_subscriptions SET user_id = ? WHERE user_id IS NULL OR user_id = 0`,
+			ownerId,
+		);
+
+		db.exec(
+			`INSERT INTO meta (key, value) VALUES ('schema_version', '2')
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		);
+		db.exec("COMMIT");
+	} catch (e) {
+		db.exec("ROLLBACK");
+		throw e;
+	}
 }
 
 function migrateGoalType(db) {
@@ -155,130 +338,127 @@ function migrateGroups(db) {
 	if (!hasGroupId) {
 		db.exec("ALTER TABLE habits ADD COLUMN group_id INTEGER");
 	}
-
-	// Create default group if none exist
-	const defaultGroup = db
-		.prepare("SELECT * FROM groups WHERE name = 'General'")
-		.get();
-	let defaultGroupId;
-	if (!defaultGroup) {
-		const result = db
-			.prepare(
-				"INSERT INTO groups (name, order_index, collapsed) VALUES ('General', 0, 0)",
-			)
-			.run();
-		defaultGroupId = result.lastInsertRowid;
-	} else {
-		defaultGroupId = defaultGroup.id;
-	}
-
-	// Assign all ungrouped habits to default group
-	const ungrouped = db
-		.prepare("SELECT COUNT(*) as cnt FROM habits WHERE group_id IS NULL")
-		.get();
-	if (ungrouped.cnt > 0) {
-		db.prepare("UPDATE habits SET group_id = ? WHERE group_id IS NULL").run(
-			defaultGroupId,
-		);
-	}
 }
 
 // --- Groups ---
 
-export function getGroups() {
+export function getGroups(userId) {
 	const db = getDb();
-	return db.prepare("SELECT * FROM groups ORDER BY order_index ASC").all();
+	return db
+		.prepare("SELECT * FROM groups WHERE user_id = ? ORDER BY order_index ASC")
+		.all(userId);
 }
 
-export function getGroup(id) {
+export function getGroup(id, userId) {
 	const db = getDb();
-	return db.prepare("SELECT * FROM groups WHERE id = ?").get(id);
+	return db
+		.prepare("SELECT * FROM groups WHERE id = ? AND user_id = ?")
+		.get(id, userId);
 }
 
-export function addGroup(name, icon, color) {
+export function addGroup(userId, name, icon, color) {
 	const db = getDb();
 	const maxOrder = db
-		.prepare("SELECT MAX(order_index) as max FROM groups")
-		.get();
+		.prepare("SELECT MAX(order_index) as max FROM groups WHERE user_id = ?")
+		.get(userId);
 	const orderIndex = (maxOrder?.max ?? -1) + 1;
 	const result = db
 		.prepare(
-			"INSERT INTO groups (name, icon, color, order_index, collapsed) VALUES (?, ?, ?, ?, 0)",
+			"INSERT INTO groups (user_id, name, icon, color, order_index, collapsed) VALUES (?, ?, ?, ?, ?, 0)",
 		)
-		.run(name, icon || null, color || null, orderIndex);
+		.run(userId, name, icon || null, color || null, orderIndex);
 	return result.lastInsertRowid;
 }
 
-export function updateGroup(id, name, icon, color) {
+export function updateGroup(id, userId, name, icon, color) {
 	const db = getDb();
 	db.prepare(
-		"UPDATE groups SET name = ?, icon = ?, color = ? WHERE id = ?",
-	).run(name, icon, color, id);
+		"UPDATE groups SET name = ?, icon = ?, color = ? WHERE id = ? AND user_id = ?",
+	).run(name, icon, color, id, userId);
 }
 
-export function updateGroupCollapsed(id, collapsed) {
+export function updateGroupCollapsed(id, userId, collapsed) {
 	const db = getDb();
-	db.prepare("UPDATE groups SET collapsed = ? WHERE id = ?").run(
+	db.prepare("UPDATE groups SET collapsed = ? WHERE id = ? AND user_id = ?").run(
 		collapsed ? 1 : 0,
 		id,
+		userId,
 	);
 }
 
-export function updateGroupOrder(id, orderIndex) {
+export function updateGroupOrder(id, userId, orderIndex) {
 	const db = getDb();
 	// Shift others to make room
 	db.prepare(
-		"UPDATE groups SET order_index = order_index + 1 WHERE order_index >= ? AND id != ?",
-	).run(orderIndex, id);
-	db.prepare("UPDATE groups SET order_index = ? WHERE id = ?").run(
+		"UPDATE groups SET order_index = order_index + 1 WHERE user_id = ? AND order_index >= ? AND id != ?",
+	).run(userId, orderIndex, id);
+	db.prepare("UPDATE groups SET order_index = ? WHERE id = ? AND user_id = ?").run(
 		orderIndex,
 		id,
+		userId,
 	);
 }
 
-export function deleteGroup(id) {
+export function deleteGroup(id, userId) {
 	const db = getDb();
-	const defaultGroup = db
-		.prepare("SELECT id FROM groups WHERE name = 'General'")
-		.get();
+	const defaultGroup = getDefaultGroup(userId);
 	const targetId = defaultGroup?.id ?? id;
 	// Move habits to default group
-	db.prepare("UPDATE habits SET group_id = ? WHERE group_id = ?").run(
-		targetId,
-		id,
-	);
-	db.prepare("DELETE FROM groups WHERE id = ?").run(id);
+	db.prepare(
+		"UPDATE habits SET group_id = ? WHERE group_id = ? AND user_id = ?",
+	).run(targetId, id, userId);
+	db.prepare("DELETE FROM groups WHERE id = ? AND user_id = ?").run(id, userId);
 }
 
-export function getDefaultGroup() {
+export function getDefaultGroup(userId) {
 	const db = getDb();
-	return db.prepare("SELECT * FROM groups WHERE name = 'General'").get();
+	return db
+		.prepare("SELECT * FROM groups WHERE user_id = ? AND name = 'General'")
+		.get(userId);
+}
+
+/** Every user gets a 'General' group (old single-user behavior, per user). */
+export function ensureDefaultGroup(userId) {
+	const db = getDb();
+	const g = getDefaultGroup(userId);
+	if (g) return g;
+	const result = db
+		.prepare(
+			"INSERT INTO groups (user_id, name, order_index, collapsed) VALUES (?, 'General', 0, 0)",
+		)
+		.run(userId);
+	return db.prepare("SELECT * FROM groups WHERE id = ?").get(result.lastInsertRowid);
 }
 
 // --- Habits ---
 
-export function getAllHabits() {
+export function getAllHabits(userId) {
 	const db = getDb();
 	return db
-		.prepare("SELECT * FROM habits ORDER BY group_id, order_index ASC")
-		.all();
+		.prepare("SELECT * FROM habits WHERE user_id = ? ORDER BY group_id, order_index ASC")
+		.all(userId);
 }
 
-export function getActiveHabits() {
+export function getActiveHabits(userId) {
 	const db = getDb();
 	return db
-		.prepare("SELECT * FROM habits WHERE archived_at IS NULL ORDER BY group_id, order_index ASC")
-		.all();
+		.prepare(
+			"SELECT * FROM habits WHERE user_id = ? AND archived_at IS NULL ORDER BY group_id, order_index ASC",
+		)
+		.all(userId);
 }
 
-export function getHabitsTree() {
+export function getHabitsTree(userId) {
 	const db = getDb();
+	ensureDefaultGroup(userId);
 	const groups = db
-		.prepare("SELECT * FROM groups ORDER BY order_index ASC")
-		.all();
+		.prepare("SELECT * FROM groups WHERE user_id = ? ORDER BY order_index ASC")
+		.all(userId);
 	const habits = db
-		.prepare("SELECT * FROM habits WHERE archived_at IS NULL ORDER BY group_id, order_index ASC")
-		.all();
+		.prepare(
+			"SELECT * FROM habits WHERE user_id = ? AND archived_at IS NULL ORDER BY group_id, order_index ASC",
+		)
+		.all(userId);
 
 	const groupMap = new Map();
 	for (const g of groups) {
@@ -293,126 +473,140 @@ export function getHabitsTree() {
 	return Array.from(groupMap.values());
 }
 
-export function getArchivedHabits() {
+export function getArchivedHabits(userId) {
 	const db = getDb();
 	return db
 		.prepare(`
 			SELECT h.*, g.name as group_name
 			FROM habits h
 			LEFT JOIN groups g ON h.group_id = g.id
-			WHERE h.archived_at IS NOT NULL
+			WHERE h.user_id = ? AND h.archived_at IS NOT NULL
 			ORDER BY h.archived_at DESC
 		`)
-		.all();
+		.all(userId);
 }
 
-export function addHabit(description, habitType, minValue, groupId) {
+export function addHabit(userId, description, habitType, minValue, groupId) {
 	const db = getDb();
-	const gid = groupId ?? getDefaultGroup()?.id ?? null;
+	let gid = null;
+	if (groupId != null && getGroup(groupId, userId)) gid = groupId;
+	if (!gid) gid = ensureDefaultGroup(userId).id;
 	const maxOrder = db
-		.prepare("SELECT MAX(order_index) as max FROM habits WHERE group_id = ?")
-		.get(gid);
+		.prepare("SELECT MAX(order_index) as max FROM habits WHERE user_id = ? AND group_id = ?")
+		.get(userId, gid);
 	const orderIndex = (maxOrder?.max ?? -1) + 1;
 	const result = db
 		.prepare(
-			"INSERT INTO habits (description, order_index, habit_type, min_value, group_id) VALUES (?, ?, ?, ?, ?)",
+			"INSERT INTO habits (user_id, description, order_index, habit_type, min_value, group_id) VALUES (?, ?, ?, ?, ?, ?)",
 		)
-		.run(description, orderIndex, habitType, minValue, gid);
+		.run(userId, description, orderIndex, habitType, minValue, gid);
 	return result.lastInsertRowid;
 }
 
-export function updateHabit(id, description, habitType, minValue, groupId) {
+export function updateHabit(id, userId, description, habitType, minValue, groupId) {
 	const db = getDb();
-	const existing = db.prepare("SELECT * FROM habits WHERE id = ?").get(id);
-	const gid = groupId ?? existing?.group_id ?? getDefaultGroup()?.id ?? null;
+	const existing = getHabit(id, userId);
+	if (!existing) return;
+	const gid =
+		groupId ??
+		existing.group_id ??
+		ensureDefaultGroup(userId).id;
 
 	// If group changed, append to end of new group
-	if (gid !== existing?.group_id) {
+	if (gid !== existing.group_id) {
 		const maxOrder = db
 			.prepare(
-				"SELECT MAX(order_index) as max FROM habits WHERE group_id = ?",
+				"SELECT MAX(order_index) as max FROM habits WHERE user_id = ? AND group_id = ?",
 			)
-			.get(gid);
+			.get(userId, gid);
 		const newOrder = (maxOrder?.max ?? -1) + 1;
 		db.prepare(
-			"UPDATE habits SET description = ?, habit_type = ?, min_value = ?, group_id = ?, order_index = ? WHERE id = ?",
-		).run(description, habitType, minValue, gid, newOrder, id);
+			"UPDATE habits SET description = ?, habit_type = ?, min_value = ?, group_id = ?, order_index = ? WHERE id = ? AND user_id = ?",
+		).run(description, habitType, minValue, gid, newOrder, id, userId);
 	} else {
 		db.prepare(
-			"UPDATE habits SET description = ?, habit_type = ?, min_value = ? WHERE id = ?",
-		).run(description, habitType, minValue, id);
+			"UPDATE habits SET description = ?, habit_type = ?, min_value = ? WHERE id = ? AND user_id = ?",
+		).run(description, habitType, minValue, id, userId);
 	}
 }
 
-export function updateHabitOrder(id, groupId, orderIndex) {
+export function updateHabitOrder(id, userId, groupId, orderIndex) {
 	const db = getDb();
 	// Shift others in target group to make room
 	db.prepare(
-		"UPDATE habits SET order_index = order_index + 1 WHERE group_id = ? AND order_index >= ? AND id != ?",
-	).run(groupId, orderIndex, id);
-	db.prepare("UPDATE habits SET group_id = ?, order_index = ? WHERE id = ?").run(
-		groupId,
-		orderIndex,
+		"UPDATE habits SET order_index = order_index + 1 WHERE user_id = ? AND group_id = ? AND order_index >= ? AND id != ?",
+	).run(userId, groupId, orderIndex, id);
+	db.prepare(
+		"UPDATE habits SET group_id = ?, order_index = ? WHERE id = ? AND user_id = ?",
+	).run(groupId, orderIndex, id, userId);
+}
+
+export function deleteHabit(id, userId) {
+	const db = getDb();
+	db.prepare("DELETE FROM habits WHERE id = ? AND user_id = ?").run(id, userId);
+}
+
+export function archiveHabit(id, userId) {
+	const db = getDb();
+	const now = new Date().toISOString().replace("T", " ").substring(0, 19);
+	db.prepare("UPDATE habits SET archived_at = ? WHERE id = ? AND user_id = ?").run(
+		now,
 		id,
+		userId,
 	);
 }
 
-export function deleteHabit(id) {
+export function unarchiveHabit(id, userId) {
 	const db = getDb();
-	db.prepare("DELETE FROM habits WHERE id = ?").run(id);
-}
-
-export function archiveHabit(id) {
-	const db = getDb();
-	const now = new Date().toISOString().replace("T", " ").substring(0, 19);
-	db.prepare("UPDATE habits SET archived_at = ? WHERE id = ?").run(now, id);
-}
-
-export function unarchiveHabit(id) {
-	const db = getDb();
-	const habit = db.prepare("SELECT * FROM habits WHERE id = ?").get(id);
+	const habit = getHabit(id, userId);
 	if (!habit) return;
 	let gid = habit.group_id;
 	// If original group no longer exists, fallback to General
 	if (gid) {
-		const group = db.prepare("SELECT id FROM groups WHERE id = ?").get(gid);
+		const group = getGroup(gid, userId);
 		if (!group) {
-			const general = db.prepare("SELECT id FROM groups WHERE name = 'General'").get();
-			gid = general?.id ?? null;
+			gid = ensureDefaultGroup(userId).id;
 		}
+	} else {
+		gid = ensureDefaultGroup(userId).id;
 	}
-	if (!gid) {
-		const general = db.prepare("SELECT id FROM groups WHERE name = 'General'").get();
-		gid = general?.id ?? null;
-	}
-	db.prepare("UPDATE habits SET archived_at = NULL, group_id = ? WHERE id = ?").run(gid, id);
+	db.prepare("UPDATE habits SET archived_at = NULL, group_id = ? WHERE id = ? AND user_id = ?").run(
+		gid,
+		id,
+		userId,
+	);
 }
 
-export function getHabit(id) {
+export function getHabit(id, userId) {
 	const db = getDb();
-	return db.prepare("SELECT * FROM habits WHERE id = ?").get(id);
+	return db
+		.prepare("SELECT * FROM habits WHERE id = ? AND user_id = ?")
+		.get(id, userId);
 }
 
-// --- Sessions ---
+// --- Sessions (ownership via habits join — no user_id column needed) --------
 
-export function getSessions(habitId, startDate, endDate) {
+const OWNED_HABIT = "EXISTS (SELECT 1 FROM habits h WHERE h.id = sessions.habit_id AND h.user_id = ?)";
+
+export function getSessions(habitId, userId, startDate, endDate) {
 	const db = getDb();
 	return db
 		.prepare(
-			"SELECT * FROM sessions WHERE habit_id = ? AND date >= ? AND date <= ? ORDER BY date",
+			`SELECT * FROM sessions WHERE habit_id = ? AND ${OWNED_HABIT} AND date >= ? AND date <= ? ORDER BY date`,
 		)
-		.all(habitId, startDate, endDate);
+		.all(habitId, userId, startDate, endDate);
 }
 
-export function getSessionForDate(habitId, date) {
+export function getSessionForDate(habitId, userId, date) {
 	const db = getDb();
 	return db
-		.prepare("SELECT * FROM sessions WHERE habit_id = ? AND date = ?")
-		.all(habitId, date);
+		.prepare(`SELECT * FROM sessions WHERE habit_id = ? AND ${OWNED_HABIT} AND date = ?`)
+		.all(habitId, userId, date);
 }
 
-export function addSession(habitId, date, durationSeconds, value) {
+export function addSession(habitId, userId, date, durationSeconds, value) {
 	const db = getDb();
+	if (!getHabit(habitId, userId)) return null;
 	const now = new Date().toISOString().replace("T", " ").substring(0, 19);
 	const result = db
 		.prepare(
@@ -422,90 +616,90 @@ export function addSession(habitId, date, durationSeconds, value) {
 	return result.lastInsertRowid;
 }
 
-export function deleteSession(id) {
+export function deleteSession(id, userId) {
 	const db = getDb();
-	db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
+	db.prepare(`DELETE FROM sessions WHERE id = ? AND ${OWNED_HABIT}`).run(id, userId);
 }
 
-export function deleteSessionsForDate(habitId, date) {
+export function deleteSessionsForDate(habitId, userId, date) {
 	const db = getDb();
-	db.prepare("DELETE FROM sessions WHERE habit_id = ? AND date = ?").run(
-		habitId,
-		date,
-	);
+	db.prepare(
+		`DELETE FROM sessions WHERE habit_id = ? AND date = ? AND ${OWNED_HABIT}`,
+	).run(habitId, date, userId);
 }
 
-export function getTotalSeconds(habitId, date) {
+export function getTotalSeconds(habitId, userId, date) {
 	const db = getDb();
 	const row = db
 		.prepare(
-			"SELECT COALESCE(SUM(duration_seconds), 0) as total FROM sessions WHERE habit_id = ? AND date = ?",
+			`SELECT COALESCE(SUM(duration_seconds), 0) as total FROM sessions WHERE habit_id = ? AND ${OWNED_HABIT} AND date = ?`,
 		)
-		.get(habitId, date);
+		.get(habitId, userId, date);
 	return row.total;
 }
 
-export function hasSession(habitId, date) {
+export function hasSession(habitId, userId, date) {
 	const db = getDb();
 	const row = db
 		.prepare(
-			"SELECT COUNT(*) as cnt FROM sessions WHERE habit_id = ? AND date = ?",
+			`SELECT COUNT(*) as cnt FROM sessions WHERE habit_id = ? AND ${OWNED_HABIT} AND date = ?`,
 		)
-		.get(habitId, date);
+		.get(habitId, userId, date);
 	return row.cnt > 0;
 }
 
-export function setValueForDate(habitId, date, value) {
+export function setValueForDate(habitId, userId, date, value) {
 	const db = getDb();
-	deleteSessionsForDate(habitId, date);
+	deleteSessionsForDate(habitId, userId, date);
 	const now = new Date().toISOString().replace("T", " ").substring(0, 19);
 	db.prepare(
 		"INSERT INTO sessions (habit_id, date, duration_seconds, completed_at, value) VALUES (?, ?, 0, ?, ?)",
 	).run(habitId, date, now, value);
 }
 
-export function getWeekDataForAllHabits(startDate, endDate) {
+export function getWeekDataForAllHabits(userId, startDate, endDate) {
 	const db = getDb();
 	return db
 		.prepare(
-			"SELECT habit_id, date, COALESCE(SUM(duration_seconds), 0) as duration_seconds, value FROM sessions WHERE date >= ? AND date <= ? GROUP BY habit_id, date ORDER BY habit_id, date",
+			`SELECT s.habit_id, s.date, COALESCE(SUM(duration_seconds), 0) as duration_seconds, s.value
+       FROM sessions s JOIN habits h ON h.id = s.habit_id
+       WHERE h.user_id = ? AND s.date >= ? AND s.date <= ?
+       GROUP BY s.habit_id, s.date ORDER BY s.habit_id, s.date`,
 		)
-		.all(startDate, endDate);
+		.all(userId, startDate, endDate);
 }
 
-export function getValueForDate(habitId, date) {
+export function getValueForDate(habitId, userId, date) {
 	const db = getDb();
 	const row = db
-		.prepare(
-			"SELECT value FROM sessions WHERE habit_id = ? AND date = ? LIMIT 1",
-		)
-		.get(habitId, date);
+		.prepare(`SELECT value FROM sessions WHERE habit_id = ? AND ${OWNED_HABIT} AND date = ? LIMIT 1`)
+		.get(habitId, userId, date);
 	return row?.value ?? null;
 }
 
 // --- Monthly Stats ---
 
-export function getMonthlyMinutes(habitId, month) {
+export function getMonthlyMinutes(habitId, userId, month) {
 	const db = getDb();
 	const row = db
 		.prepare(
-			"SELECT COALESCE(SUM(duration_seconds), 0) as total FROM sessions WHERE habit_id = ? AND date LIKE ?",
+			`SELECT COALESCE(SUM(duration_seconds), 0) as total FROM sessions WHERE habit_id = ? AND ${OWNED_HABIT} AND date LIKE ?`,
 		)
-		.get(habitId, `${month}-%`);
+		.get(habitId, userId, `${month}-%`);
 	return Math.floor(row.total / 60);
 }
 
-export function getMonthlyCompletions(habitId, month) {
+export function getMonthlyCompletions(habitId, userId, month) {
 	const db = getDb();
 	const row = db
 		.prepare(
-			"SELECT COUNT(DISTINCT date) as cnt FROM sessions WHERE habit_id = ? AND date LIKE ?",
+			`SELECT COUNT(DISTINCT date) as cnt FROM sessions WHERE habit_id = ? AND ${OWNED_HABIT} AND date LIKE ?`,
 		)
-		.get(habitId, `${month}-%`);
+		.get(habitId, userId, `${month}-%`);
 	return row.cnt;
 }
 
-export function getMonthlyDailyData(habitId, month, daysInMonth, habitType) {
+export function getMonthlyDailyData(habitId, userId, month, daysInMonth, habitType) {
 	const db = getDb();
 	const daily = [];
 	for (let day = 1; day <= daysInMonth; day++) {
@@ -514,27 +708,27 @@ export function getMonthlyDailyData(habitId, month, daysInMonth, habitType) {
 			case "timer": {
 				const row = db
 					.prepare(
-						"SELECT COALESCE(SUM(duration_seconds), 0) as total FROM sessions WHERE habit_id = ? AND date = ?",
+						`SELECT COALESCE(SUM(duration_seconds), 0) as total FROM sessions WHERE habit_id = ? AND ${OWNED_HABIT} AND date = ?`,
 					)
-					.get(habitId, date);
+					.get(habitId, userId, date);
 				daily.push(row.total);
 				break;
 			}
 			case "boolean": {
 				const row = db
 					.prepare(
-						"SELECT COUNT(*) as cnt FROM sessions WHERE habit_id = ? AND date = ?",
+						`SELECT COUNT(*) as cnt FROM sessions WHERE habit_id = ? AND ${OWNED_HABIT} AND date = ?`,
 					)
-					.get(habitId, date);
+					.get(habitId, userId, date);
 				daily.push(row.cnt > 0 ? 1 : 0);
 				break;
 			}
 			default: {
 				const row = db
 					.prepare(
-						"SELECT COALESCE(SUM(value), 0) as total FROM sessions WHERE habit_id = ? AND date = ?",
+						`SELECT COALESCE(SUM(value), 0) as total FROM sessions WHERE habit_id = ? AND ${OWNED_HABIT} AND date = ?`,
 					)
-					.get(habitId, date);
+					.get(habitId, userId, date);
 				daily.push(row.total);
 			}
 		}
@@ -542,13 +736,13 @@ export function getMonthlyDailyData(habitId, month, daysInMonth, habitType) {
 	return daily;
 }
 
-export function getStreak(habitId) {
+export function getStreak(habitId, userId) {
 	const db = getDb();
 	const rows = db
 		.prepare(
-			"SELECT DISTINCT date FROM sessions WHERE habit_id = ? ORDER BY date DESC",
+			`SELECT DISTINCT date FROM sessions WHERE habit_id = ? AND ${OWNED_HABIT} ORDER BY date DESC`,
 		)
-		.all(habitId);
+		.all(userId);
 	if (rows.length === 0) return 0;
 
 	let streak = 0;
@@ -575,7 +769,7 @@ export function getStreak(habitId) {
 
 // --- Week Summary ---
 
-export function getWeekSummary(habitId) {
+export function getWeekSummary(habitId, userId) {
 	const db = getDb();
 	const day = new Date();
 	const dayOfWeek = (day.getDay() + 6) % 7; // Mon=0
@@ -586,9 +780,11 @@ export function getWeekSummary(habitId) {
 
 	const rows = db
 		.prepare(
-			"SELECT date, COUNT(*) as sessionCount, SUM(duration_seconds) as totalSeconds, value FROM sessions WHERE habit_id = ? AND date >= ? GROUP BY date ORDER BY date",
-		)
-		.all(habitId, mondayStr);
+			`SELECT date, COUNT(*) as sessionCount, SUM(duration_seconds) as totalSeconds, value
+       FROM sessions WHERE habit_id = ? AND ${OWNED_HABIT} AND date >= ?
+       GROUP BY date ORDER BY date`,
+		) 
+		.all(habitId, userId, mondayStr);
 
 	return rows.map((r) => ({
 		date: r.date,
@@ -600,29 +796,33 @@ export function getWeekSummary(habitId) {
 
 // --- Notes ---
 
-export function getNote(date) {
+export function getNote(userId, date) {
 	const db = getDb();
-	return db.prepare("SELECT * FROM notes WHERE date = ?").get(date);
+	return db
+		.prepare("SELECT * FROM notes WHERE user_id = ? AND date = ?")
+		.get(userId, date);
 }
 
-export function getNotesForDates(dates) {
+export function getNotesForDates(userId, dates) {
 	const db = getDb();
 	if (dates.length === 0) return [];
 	const placeholders = dates.map(() => "?").join(",");
-	return db.prepare(`SELECT * FROM notes WHERE date IN (${placeholders})`).all(...dates);
+	return db
+		.prepare(`SELECT * FROM notes WHERE user_id = ? AND date IN (${placeholders})`)
+		.all(userId, ...dates);
 }
 
-export function setNote(date, content) {
+export function setNote(userId, date, content) {
 	const db = getDb();
 	const now = new Date().toISOString().replace("T", " ").substring(0, 19);
 	if (!content || content.trim() === "") {
-		db.prepare("DELETE FROM notes WHERE date = ?").run(date);
+		db.prepare("DELETE FROM notes WHERE user_id = ? AND date = ?").run(userId, date);
 		return null;
 	}
 	const trimmed = content.trim();
 	db.prepare(
-		"INSERT INTO notes (date, content, updated_at) VALUES (?, ?, ?) ON CONFLICT(date) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at",
-	).run(date, trimmed, now);
+		"INSERT INTO notes (user_id, date, content, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, date) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at",
+	).run(userId, date, trimmed, now);
 	return { date, content: trimmed, updated_at: now };
 }
 
@@ -632,36 +832,45 @@ function now() {
 	return new Date().toISOString().replace("T", " ").substring(0, 19);
 }
 
-export function getSetting(key) {
+export function getSetting(userId, key) {
 	const db = getDb();
-	return db.prepare("SELECT * FROM settings WHERE key = ?").get(key) || null;
+	return (
+		db
+			.prepare("SELECT * FROM settings WHERE user_id = ? AND key = ?")
+			.get(userId, key) || null
+	);
 }
 
-export function setSetting(key, value) {
+export function setSetting(userId, key, value) {
 	const db = getDb();
 	if (!value || value.trim() === "") {
-		db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+		db.prepare("DELETE FROM settings WHERE user_id = ? AND key = ?").run(userId, key);
 		return null;
 	}
 	const trimmed = value.trim();
 	const ts = now();
 	db.prepare(
-		"INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-	).run(key, trimmed, ts);
+		"INSERT INTO settings (user_id, key, value, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+	).run(userId, key, trimmed, ts);
 	return { key, value: trimmed, updated_at: ts };
 }
 
-export function getGoals() {
+export function getGoals(userId) {
 	const db = getDb();
-	return db.prepare("SELECT * FROM goals ORDER BY id DESC").all();
+	return db
+		.prepare("SELECT * FROM goals WHERE user_id = ? ORDER BY id DESC")
+		.all(userId);
 }
 
-export function getGoal(id) {
+export function getGoal(id, userId) {
 	const db = getDb();
-	return db.prepare("SELECT * FROM goals WHERE id = ?").get(id);
+	return db
+		.prepare("SELECT * FROM goals WHERE id = ? AND user_id = ?")
+		.get(id, userId);
 }
 
 export function addGoal(
+	userId,
 	title,
 	description,
 	dueDate,
@@ -673,9 +882,10 @@ export function addGoal(
 	const numbered = type === "numbered";
 	const result = db
 		.prepare(
-			"INSERT INTO goals (title, description, due_date, status, type, start_value, target_value, current_value, created_at) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)",
+			"INSERT INTO goals (user_id, title, description, due_date, status, type, start_value, target_value, current_value, created_at) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)",
 		)
 		.run(
+			userId,
 			title,
 			description ?? "",
 			dueDate,
@@ -688,9 +898,10 @@ export function addGoal(
 	return result.lastInsertRowid;
 }
 
-export function updateGoal(id, { title, description, dueDate, type, startValue, targetValue }) {
+export function updateGoal(id, userId, { title, description, dueDate, type, startValue, targetValue }) {
 	const db = getDb();
-	const goal = getGoal(id);
+	const goal = getGoal(id, userId);
+	if (!goal) return;
 	const t = type === "numbered" ? "numbered" : "text";
 	const start = t === "numbered" ? (startValue ?? goal.start_value) : null;
 	const target = t === "numbered" ? (targetValue ?? goal.target_value) : null;
@@ -700,7 +911,7 @@ export function updateGoal(id, { title, description, dueDate, type, startValue, 
 		t === "numbered" && startValue !== undefined && startValue !== goal.start_value;
 	const current = t === "numbered" ? (startChanged ? startValue : goal.current_value ?? start) : null;
 	db.prepare(
-		"UPDATE goals SET title = ?, description = ?, due_date = ?, type = ?, start_value = ?, target_value = ?, current_value = ? WHERE id = ?",
+		"UPDATE goals SET title = ?, description = ?, due_date = ?, type = ?, start_value = ?, target_value = ?, current_value = ? WHERE id = ? AND user_id = ?",
 	).run(
 		title ?? goal.title,
 		description ?? goal.description,
@@ -710,51 +921,58 @@ export function updateGoal(id, { title, description, dueDate, type, startValue, 
 		target,
 		current,
 		id,
+		userId,
 	);
 }
 
-export function updateGoalValue(id, current) {
-	const db = getDb();
-	db.prepare("UPDATE goals SET current_value = ? WHERE id = ? AND type = 'numbered'").run(
-		current,
-		id,
-	);
-}
-
-export function setGoalStatus(id, status) {
+export function updateGoalValue(id, userId, current) {
 	const db = getDb();
 	db.prepare(
-		"UPDATE goals SET status = ?, completed_at = CASE WHEN ? = 'completed' THEN ? ELSE NULL END WHERE id = ?",
-	).run(status, status, now(), id);
+		"UPDATE goals SET current_value = ? WHERE id = ? AND user_id = ? AND type = 'numbered'",
+	).run(current, id, userId);
 }
 
-export function deleteGoal(id) {
+export function setGoalStatus(id, userId, status) {
 	const db = getDb();
-	db.prepare("DELETE FROM goals WHERE id = ?").run(id);
+	db.prepare(
+		"UPDATE goals SET status = ?, completed_at = CASE WHEN ? = 'completed' THEN ? ELSE NULL END WHERE id = ? AND user_id = ?",
+	).run(status, status, now(), id, userId);
 }
 
-export function getActiveGoals() {
+export function deleteGoal(id, userId) {
 	const db = getDb();
-	return db.prepare("SELECT * FROM goals WHERE status = 'active'").all();
+	db.prepare("DELETE FROM goals WHERE id = ? AND user_id = ?").run(id, userId);
+}
+
+export function getActiveGoals(userId) {
+	const db = getDb();
+	return db
+		.prepare("SELECT * FROM goals WHERE user_id = ? AND status = 'active'")
+		.all(userId);
 }
 
 // --- Push subscriptions ---
 
-export function savePushSubscription(endpoint, keysJson, tzOffsetMinutes) {
+export function savePushSubscription(userId, endpoint, keysJson, tzOffsetMinutes) {
 	const db = getDb();
 	db.prepare(
-		"INSERT INTO push_subscriptions (endpoint, keys_json, tz_offset_minutes, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET keys_json = excluded.keys_json, tz_offset_minutes = excluded.tz_offset_minutes",
-	).run(endpoint, keysJson, tzOffsetMinutes ?? 0, now());
+		"INSERT INTO push_subscriptions (user_id, endpoint, keys_json, tz_offset_minutes, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, keys_json = excluded.keys_json, tz_offset_minutes = excluded.tz_offset_minutes",
+	).run(userId, endpoint, keysJson, tzOffsetMinutes ?? 0, now());
 }
 
-export function getPushSubscriptions() {
+export function getPushSubscriptions(userId) {
 	const db = getDb();
-	return db.prepare("SELECT * FROM push_subscriptions").all();
+	return db
+		.prepare("SELECT * FROM push_subscriptions WHERE user_id = ?")
+		.all(userId);
 }
 
-export function deletePushSubscription(endpoint) {
+export function deletePushSubscription(userId, endpoint) {
 	const db = getDb();
-	db.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?").run(endpoint);
+	db.prepare("DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?").run(
+		userId,
+		endpoint,
+	);
 }
 
 // --- Goal reminder dedup ---

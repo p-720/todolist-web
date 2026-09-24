@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { base } from '$app/paths';
+  import { authStore, logout } from '$lib/stores/auth.js';
 
   let status = null;
   let calendars = null;
@@ -9,6 +10,50 @@
   let clientSecret = '';
   let busy = false;
   let error = null;
+
+  let keys = null;
+  let keyName = '';
+  let newKey = null;
+
+  async function loadKeys() {
+    try {
+      keys = await (await fetch(`${base}/api/auth/keys`)).json();
+    } catch {
+      keys = null;
+    }
+  }
+
+  async function createKey() {
+    if (!keyName.trim()) return;
+    error = null;
+    try {
+      const res = await fetch(`${base}/api/auth/keys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: keyName.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        error = data.error || 'Could not create key';
+        return;
+      }
+      newKey = data.raw;
+      keyName = '';
+      await loadKeys();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function deleteKey(id) {
+    await fetch(`${base}/api/auth/keys?id=${id}`, { method: 'DELETE' });
+    await loadKeys();
+  }
+
+  async function signOut() {
+    await logout();
+    window.location.href = `${base}/login`;
+  }
 
   async function loadStatus() {
     try {
@@ -87,10 +132,41 @@
     await loadStatus();
   }
 
-  onMount(loadStatus);
+  onMount(() => {
+    loadStatus();
+    loadKeys();
+  });
 </script>
 
 <div class="page">
+  <div class="box account">
+    <div class="who">
+      <h2>Signed in as <b>{$authStore.username || '…'}</b></h2>
+      <button class="btn" on:click={signOut}>Sign out</button>
+    </div>
+    <h3>API keys</h3>
+    <p class="sub">For the Android app and desktop scripts (waybar/rofi). Shown once — store it safely.</p>
+    {#if keys}
+      {#each keys as key}
+        <div class="key-row">
+          <span>{key.name}</span>
+          <span class="sub">{key.last_used_at ? `used ${key.last_used_at}` : 'never used'}</span>
+          <button class="btn danger sm" on:click={() => deleteKey(key.id)}>Revoke</button>
+        </div>
+      {/each}
+    {/if}
+    <div class="key-make">
+      <input class="field" placeholder="Key name (e.g. phone, laptop)" bind:value={keyName} />
+      <button class="btn" on:click={createKey} disabled={!keyName.trim()}>Create</button>
+    </div>
+    {#if newKey}
+      <div class="newkey">
+        <p class="sub">Copy it now — it will not be shown again:</p>
+        <code>{newKey}</code>
+      </div>
+    {/if}
+  </div>
+
   <h1>Calendar tracking</h1>
   <p class="sub">Timer start/stop creates a live event in your Google Calendar.</p>
 
@@ -246,5 +322,51 @@
   .ok-line {
     font-size: 11px;
     color: #a6e3a1;
+  }
+  .account {
+    display: flex;
+    flex-direction: column;
+  }
+  .who {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .who h2 {
+    font-size: 13px;
+  }
+  .btn.sm {
+    padding: 3px 8px;
+    font-size: 11px;
+    margin-top: 0;
+  }
+  .key-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    padding: 6px 0;
+    border-bottom: 1px solid #363a4f;
+  }
+  .key-make {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .key-make .field {
+    margin: 0;
+    flex: 1;
+  }
+  .newkey {
+    margin-top: 10px;
+  }
+  .newkey code {
+    display: block;
+    background: #1e2030;
+    border: 1px solid #454a60;
+    padding: 8px;
+    font-size: 11px;
+    word-break: break-all;
   }
 </style>

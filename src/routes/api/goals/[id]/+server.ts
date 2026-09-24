@@ -1,33 +1,36 @@
 import { json } from "@sveltejs/kit";
 import { deleteGoal, getGoal, setGoalStatus, updateGoal, updateGoalValue } from "$lib/server/db";
+import { requireUser } from "$lib/server/auth";
 
-export function GET({ params }) {
-	const goal = getGoal(params.id);
+export async function GET({ params, request }) {
+	const user = await requireUser(request);
+	const goal = getGoal(params.id, user.id);
 	if (!goal) return json({ error: "not found" }, { status: 404 });
 	return json(goal);
 }
 
 export async function PATCH({ params, request }) {
-	const body = await request.json();
-	const goal = getGoal(params.id);
+	const user = await requireUser(request);
+	const goal = getGoal(params.id, user.id);
 	if (!goal) return json({ error: "not found" }, { status: 404 });
 
+	const body = await request.json();
 	if (body.action) {
 		switch (body.action) {
 			case "complete":
-				setGoalStatus(goal.id, "completed");
+				setGoalStatus(goal.id, user.id, "completed");
 				break;
 			case "archive":
-				setGoalStatus(goal.id, "archived");
+				setGoalStatus(goal.id, user.id, "archived");
 				break;
 			case "reopen":
-				setGoalStatus(goal.id, "active");
+				setGoalStatus(goal.id, user.id, "active");
 				break;
 			case "value":
 				if (!Number.isInteger(body.value)) {
 					return json({ error: "value must be an integer" }, { status: 400 });
 				}
-				updateGoalValue(goal.id, body.value);
+				updateGoalValue(goal.id, user.id, body.value);
 				break;
 			default:
 				return json({ error: "unknown action" }, { status: 400 });
@@ -56,7 +59,7 @@ export async function PATCH({ params, request }) {
 			return json({ error: "target must be an integer" }, { status: 400 });
 		}
 	}
-	updateGoal(goal.id, {
+	updateGoal(goal.id, user.id, {
 		title: body.title,
 		description: body.description,
 		dueDate: body.dueDate,
@@ -67,7 +70,8 @@ export async function PATCH({ params, request }) {
 	return json({ ok: true });
 }
 
-export async function DELETE({ params }) {
-	deleteGoal(params.id);
+export async function DELETE({ params, request }) {
+	const user = await requireUser(request);
+	deleteGoal(params.id, user.id);
 	return json({ ok: true });
 }

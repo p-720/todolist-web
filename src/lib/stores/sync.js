@@ -60,8 +60,13 @@ function connect() {
 		}
 	};
 
-	ws.onclose = () => {
+	ws.onclose = (event) => {
 		clearPing();
+		// 1008 policy error = failed auth: stop hammering, go to login
+		if (event?.code === 1008) {
+			window.location.href = `${base}/login`;
+			return;
+		}
 		reconnectTimer = setTimeout(connect, RECONNECT_DELAY);
 	};
 

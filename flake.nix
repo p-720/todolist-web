@@ -5,44 +5,23 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     devshell.url = "github:numtide/devshell";
     flake-utils.url = "github:numtide/flake-utils";
-    android.url = "github:tadfisher/android-nixpkgs";
   };
 
-  outputs = { self, nixpkgs, devshell, flake-utils, android }:
-    {
-      overlay = final: prev: {
-        inherit (self.packages.${final.system}) android-sdk;
-      };
-    }
-    // flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (system:
+  outputs = { self, nixpkgs, devshell, flake-utils }:
+    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (system:
       let
         inherit (nixpkgs) lib;
         pkgs = import nixpkgs {
           inherit system;
           config.allowUnfree = true;
-          overlays = [
-            devshell.overlays.default
-            self.overlay
-          ];
+          overlays = [ devshell.overlays.default ];
         };
-        androidPkgs = android.sdk.${system} (sdkPkgs: with sdkPkgs;
-          [
-            ndk-27-0-11902837
-            build-tools-36-0-0
-            build-tools-35-0-0
-            build-tools-34-0-0
-            cmdline-tools-latest
-            platform-tools
-            platforms-android-34
-            platforms-android-36
-          ]
-        );
         app = pkgs:
           pkgs.buildNpmPackage {
             pname = "pomotasker";
             version = "0.1.0";
             src = ./.;
-            npmDepsHash = "sha256-sE6xXmwATlaE+uonV8oJVepsODWe9D9Z79YWYPOcgdk=";
+            npmDepsHash = "sha256-Uj4hXvX9E7lqVs9BO3JSFPFR57JSWQHmWX5GE7UrzNw=";
             nodejs = pkgs.nodejs_22;
             nativeBuildInputs = [ pkgs.python3 pkgs.node-gyp pkgs.pkg-config ];
             buildInputs = [ pkgs.sqlite ];
@@ -52,13 +31,11 @@
             installPhase = ''
               mkdir -p $out/lib/node_modules/pomotasker-web
               cp -r package.json build node_modules $out/lib/node_modules/pomotasker-web/
-              cp server.js ws-server.js reminders.js $out/lib/node_modules/pomotasker-web/
+              cp server.js ws-server.js reminders.js auth-server.js $out/lib/node_modules/pomotasker-web/
             '';
           };
       in rec {
-        packages = { android-sdk = androidPkgs; } // {
-          default = app pkgs;
-        };
+        packages = { default = app pkgs; };
 
         apps = {
           default = {
@@ -73,19 +50,7 @@
 
         devShell = pkgs.devshell.mkShell {
           name = "pomotasker";
-          env = [
-            { name = "JAVA_HOME"; value = pkgs.jdk21.home; }
-            { name = "ANDROID_HOME"; value = "${androidPkgs}/share/android-sdk"; }
-            { name = "ANDROID_SDK_ROOT"; value = "${androidPkgs}/share/android-sdk"; }
-            { name = "PATH"; prefix = "${androidPkgs}/bin"; }
-          ];
-          packages = [
-            pkgs.git-filter-repo
-            pkgs.nodejs_22
-            pkgs.jdk8
-            pkgs.gradle
-            androidPkgs
-          ];
+          packages = [ pkgs.nodejs_22 ];
         };
       }
     ) // {

@@ -11,8 +11,14 @@ import {
 	saveCreds,
 	selectCalendar,
 } from "$lib/server/calendar";
+import { requireUser } from "$lib/server/auth";
 
-export const GET = (async ({ url }) => {
+// Auth is enforced, but the Google account behind it is a single global one
+// (data/google-oauth.json), so the calendars shown are p720's for every user.
+// Known ceiling — per-user Google accounts would need per-user token storage.
+export const GET = (async ({ url, request }) => {
+	const user = await requireUser(request);
+
 	if (url.searchParams.get("connect")) {
 		try {
 			const authUrl = getAuthUrl();
@@ -44,6 +50,7 @@ export const GET = (async ({ url }) => {
 	return json(getStatus());
 }) satisfies RequestHandler;
 export const POST = (async ({ url, request }) => {
+	const user = await requireUser(request);
 	const action = url.searchParams.get("action") || "";
 	const body = await request.json().catch(() => ({}));
 

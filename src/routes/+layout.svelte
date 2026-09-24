@@ -1,8 +1,12 @@
 <script>
   import { onMount } from 'svelte';
   import { base } from '$app/paths';
+  import { page } from '$app/stores';
+  import { goto } from '$app/navigation';
   import { initSync, reconnect } from '$lib/stores/sync.js';
-  import { initTimerNotification } from '$lib/stores/timer-notification.js';
+  import { loadAuth, authStore } from '$lib/stores/auth.js';
+
+  let authed = $authStore.authenticated;
 
   if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
     navigator.serviceWorker.register(`${base}/sw/service-worker.js`).then(() => {
@@ -13,9 +17,15 @@
     });
   }
 
-  onMount(() => {
-    initSync();
-    initTimerNotification();
+  onMount(async () => {
+    const isAuthPage = $page.url.pathname === `${base}/login` || $page.url.pathname === `${base}/register`;
+    authed = await loadAuth();
+    if (!authed && !isAuthPage) {
+      goto(`${base}/login`);
+      return;
+    }
+
+    if (authed) initSync();
 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {

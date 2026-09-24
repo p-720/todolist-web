@@ -58,3 +58,6 @@ capacitor.config.json
 www/
 
 .mcp.json
+
+# Auth signing secret (lives in /var/lib/pomotasker/data on the server)
+data/auth-secret

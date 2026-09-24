@@ -7,14 +7,16 @@ import {
 	getMonthlyDailyData,
 	getNotesForDates,
 } from "$lib/server/db";
+import { requireUser } from "$lib/server/auth";
 
-export function GET({ url }) {
+export async function GET({ url, request }) {
+	const user = await requireUser(request);
 	const month = url.searchParams.get("month");
 	if (!month) {
 		return json({ error: "Missing month" }, { status: 400 });
 	}
 
-	const habits = getActiveHabits();
+	const habits = getActiveHabits(user.id);
 	const daysInMonth = new Date(
 		parseInt(month.split("-")[0]),
 		parseInt(month.split("-")[1]),
@@ -26,10 +28,10 @@ export function GET({ url }) {
 	let bestStreak = 0;
 
 	const habitStats = habits.map((habit) => {
-		const daily = getMonthlyDailyData(habit.id, month, daysInMonth, habit.habit_type);
-		const minutes = getMonthlyMinutes(habit.id, month);
-		const completions = getMonthlyCompletions(habit.id, month);
-		const streak = getStreak(habit.id);
+		const daily = getMonthlyDailyData(habit.id, user.id, month, daysInMonth, habit.habit_type);
+		const minutes = getMonthlyMinutes(habit.id, user.id, month);
+		const completions = getMonthlyCompletions(habit.id, user.id, month);
+		const streak = getStreak(habit.id, user.id);
 
 		if (habit.habit_type === "timer") {
 			totalMinutes += minutes;
@@ -80,7 +82,7 @@ export function GET({ url }) {
 		dailyCompletions.push(count);
 	}
 
-	const notes = getNotesForDates(dates);
+	const notes = getNotesForDates(user.id, dates);
 	const notesMap = new Map(notes.map((n) => [n.date, n]));
 
 	return json({
