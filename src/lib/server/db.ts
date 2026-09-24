@@ -750,7 +750,7 @@ export function getStreak(habitId, userId) {
 		.prepare(
 			`SELECT DISTINCT date FROM sessions WHERE habit_id = ? AND ${OWNED_HABIT} ORDER BY date DESC`,
 		)
-		.all(userId);
+		.all(habitId, userId);
 	if (rows.length === 0) return 0;
 
 	let streak = 0;

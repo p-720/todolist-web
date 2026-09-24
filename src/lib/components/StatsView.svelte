@@ -24,10 +24,13 @@
     }
 
     const results = await Promise.all(
-      months.map(m => fetch(`${base}/api/stats?month=${m}`).then(r => r.json()))
+      months.map(m => fetch(`${base}/api/stats?month=${m}`).then(r => r.json()).catch(() => null))
     );
 
-    allStats = results;
+    // Drop months the API rejected (error bodies have no `month` field) so a
+    // single failed fetch degrades to an empty month instead of crashing the
+    // whole grid in buildMultiMonthGrid.
+    allStats = results.filter(s => s && s.month);
     loading = false;
   }
 
