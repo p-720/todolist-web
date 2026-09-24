@@ -131,7 +131,7 @@
   }
 
   function isCircleActive(circle) {
-    return activeTimer?.activeHabitId === habit.id && activeTimer?.running && circle.isToday && habit.habit_type === 'timer';
+    return activeTimer?.activeHabitId === habit.id && activeTimer?.running && circle.isToday;
   }
 
   function onCircleClick(circle) {
@@ -162,7 +162,9 @@
       startTime: Date.now(),
       elapsedBefore: 0,
     }));
-    postCalendarEvent({ id: habit.id, description: habit.description }, 'start', habit.timer_duration_seconds);
+    // Timer habits: provisional end = their target duration. Others: 1-min
+    // provisional (undefined) that the per-minute ticker extends, like quick tasks.
+    postCalendarEvent({ id: habit.id, description: habit.description }, 'start', habit.habit_type === 'timer' ? habit.timer_duration_seconds : undefined);
     send({ type: 'timer:update', data: get(timerStore) });
   }
 
@@ -193,7 +195,11 @@
     send({ type: 'timer:update', data: get(timerStore) });
 
     const label = elapsed > 0 ? formatDuration(elapsed) : '';
-    circles = circles.map(c => c.date === date ? { ...c, state: elapsed > 0 ? 'complete' : 'empty', label } : c);
+    // Timer habits: their circle IS the session, mark it complete. Other types:
+    // duration-only by design — the circle (check/value) stays as-is.
+    if (habit.habit_type === 'timer') {
+      circles = circles.map(c => c.date === date ? { ...c, state: elapsed > 0 ? 'complete' : 'empty', label } : c);
+    }
   }
 
   function getElapsed() {
@@ -246,7 +252,7 @@
     editingNumber = null;
   }
 
-  $: isActiveRow = habit.habit_type === 'timer' && activeTimer?.activeHabitId === habit.id && activeTimer?.running;
+  $: isActiveRow = activeTimer?.activeHabitId === habit.id && activeTimer?.running;
   $: rowClass = isActiveRow ? 'habit-row active' : 'habit-row';
 
   // One active timer at a time: while another (habit or quick task) runs, this row's start is blocked.
@@ -264,15 +270,13 @@
     }
   }
 
-  $: playLabel = habit.habit_type === 'timer' && isActiveRow ? '⏹' : '▶';
+  $: playLabel = isActiveRow ? '⏹' : '▶';
 </script>
 
 <div class={rowClass}>
   <div class="habit-header">
     <span class="habit-desc">{habit.description}</span>
-    {#if habit.habit_type === 'timer'}
-      <button class="edit-btn" class:dimmed={otherTimerRunning} on:click={toggleTimerFromHeader} aria-label="Start/stop timer">{playLabel}</button>
-    {/if}
+    <button class="edit-btn" class:dimmed={otherTimerRunning} on:click={toggleTimerFromHeader} aria-label="Start/stop timer">{playLabel}</button>
     <button class="edit-btn" on:click={() => onEdit?.(habit)} aria-label="Edit habit">✏️</button>
     <button class="edit-btn delete-btn" on:click={() => onArchive?.(habit)} aria-label="Delete habit">🗑</button>
   </div>

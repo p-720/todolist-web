@@ -83,3 +83,31 @@ Port PomoTasker (Rust/GTK4 desktop habit/pomodoro tracker) to a responsive web a
 - No auth needed (local server only).
 - Timer state is client-side (browser interval). Session is recorded on server when timer stops.
 - Catppuccin Mocha palette: bg #1e1e2e, surface #232636, border #363a4f, text #cdd6f4, blue #89b4fa, green #a6e3a1, lavender #b4befe, mauve #cba6f7, red #f38ba8, yellow #f9e2af.
+
+---
+
+## Feature: Numbered Goals (counters) — plan agreed 2025-07
+
+New goal type `numbered`: a live integer counter moving from a **start** to a **target** (either direction; target 0 = "get number to 0"). Plain-text goals unchanged.
+
+### Decisions (grilled)
+- Live counter on the goal (`current_value`), **no auto-complete** — manual Complete button stays.
+- One type `numbered` (not two up/down types); direction derived: target > start → ↑, else ↓.
+- Integers only.
+- Counter edited on the card: editable number field **+** −/− buttons, step 1, no step config.
+- Per-day, recomputed live: `ceil(|target − current| / max(1, daysUntil(due) + 1))` (inclusive of today; overdue clamps to 1 → "do all now").
+- Card: title (+overdue badge), counter row `− [current] + → target ↑/↓`, `Due X · N/day`, discreet progress bar along card bottom = `(current − start)/(target − start)` clamped 0–1 (guard start === target → 1).
+- Add dialog: type picker Text/Numbered; Numbered adds Start + Target inputs (integers, required when numbered). Edit dialog: same; **changing start resets current to the new start** (incl. text→numbered); otherwise current is preserved.
+- Migration: `ALTER TABLE goals ADD COLUMN type TEXT NOT NULL DEFAULT 'text'` + `start_value`, `target_value`, `current_value` INTEGER. Old rows → text/NULLs. `reminders.js` hand-synced schema gets the same columns. At creation `current_value = start_value`.
+- Push (09:00): digest line for numbered goals `Title — N days left · 12 → 0 · 4/day`; overdue body `Overdue since <date> — <remaining> left, do <remaining> today`. Text goals: format unchanged.
+- Pure math (`perDay`, `progress`, line formatting) in `src/lib/goal-math.js`, bundled by SvelteKit. `reminders.js` keeps a mirrored copy of the worker-side parts (flake ships `reminders.js` to the nix store WITHOUT `src/` — no src/ imports allowed there). `tests/reminders.test.mjs` asserts both copies agree.
+- Tests: extend `tests/reminders.test.mjs` (perDay: normal/due-today/overdue/at-target; digest line ↑ and ↓) and `tests/goals.spec.js` (e2e: create numbered goal, counter +/− updates per-day, due-date edit recomputes).
+
+### Implementation order
+1. [x] `src/lib/server/db.ts`: schema + migration + `addGoal`/`updateGoal` take type/start/target; new `updateGoalValue(id, current)`
+2. [x] `src/lib/goal-math.js`: `perDay()`, `progress()`, `numberedDigestLine()`, `numberedOverdueBody()`
+3. [x] `src/routes/api/goals/+server.ts` + `[id]/+server.ts`: accept new fields in POST/PATCH (incl. `action: "value"`), integer validation
+4. [x] `AddGoalDialog.svelte`: type picker + start/target inputs; edit prefill
+5. [x] `GoalsView.svelte`: numbered card (counter row, per-day, progress bar)
+6. [x] `reminders.js`: schema sync + migrate + use shared math in digest/overdue payloads
+7. [x] Tests: `reminders.test.mjs` (unit) + `goals.spec.js` (e2e); verified: reminders unit OK, goals e2e 4/4, habits e2e 4/4, live DB migrated (old rows → type='text')
