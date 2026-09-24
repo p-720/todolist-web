@@ -236,12 +236,16 @@ function sendPush(subscription, payload) {
 
 export function runGoalReminderTick(nowMs = Date.now()) {
 	const d = getDb();
-	const owner = d.prepare("SELECT MIN(id) AS id FROM users").get()?.id ?? 0;
+	const owner = d.prepare("SELECT MIN(id) AS id FROM users").get()?.id;
 	// Pre-v2 dbs: this module's ALTER may have run before db.ts backfilled
 	// user_ids (reminder init fires on boot, db.ts on first request). Backfill
-	// to the first user here too — cheap and idempotent.
-	d.prepare("UPDATE goals SET user_id = ? WHERE user_id IS NULL").run(owner);
-	d.prepare("UPDATE push_subscriptions SET user_id = ? WHERE user_id IS NULL").run(owner);
+	// to the first user here too — but only when a real user exists:
+	// booting a legacy db, users is still empty and a fake id would trip the
+	// FK. The next tick (or the first request, which seeds p720) lands it.
+	if (owner != null) {
+		d.prepare("UPDATE goals SET user_id = ? WHERE user_id IS NULL").run(owner);
+		d.prepare("UPDATE push_subscriptions SET user_id = ? WHERE user_id IS NULL").run(owner);
+	}
 	const goals = d.prepare("SELECT * FROM goals WHERE status = 'active'").all();
 	const subs = d.prepare("SELECT * FROM push_subscriptions").all();
 

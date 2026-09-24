@@ -209,13 +209,14 @@ function migrateAuth(db_) {
 				.run(ownerId);
 			db.exec("DROP TABLE groups; ALTER TABLE groups_mig RENAME TO groups;");
 		}
-		db.exec(`UPDATE groups SET user_id = ? WHERE user_id IS NULL`, ownerId);
+		// ponytail: better-sqlite3 exec() takes no params — ? would bind NULL.
+		db.prepare(`UPDATE groups SET user_id = ? WHERE user_id IS NULL`).run(ownerId);
 		if (hasCol("habits", "user_id")) {
 			// already migrated columns — still backfill any NULLs defensively
-			db.exec(`UPDATE habits SET user_id = ? WHERE user_id IS NULL`, ownerId);
+			db.prepare(`UPDATE habits SET user_id = ? WHERE user_id IS NULL`).run(ownerId);
 		} else {
 			db.exec("ALTER TABLE habits ADD COLUMN user_id INTEGER");
-			db.exec(`UPDATE habits SET user_id = ?`, ownerId);
+			db.prepare(`UPDATE habits SET user_id = ?`).run(ownerId);
 		}
 
 		// notes: old PK (date) -> (user_id, date)
@@ -236,12 +237,14 @@ function migrateAuth(db_) {
           content TEXT NOT NULL DEFAULT '',
           updated_at TEXT NOT NULL,
           PRIMARY KEY (user_id, date)
-        );
-        INSERT INTO notes_mig (user_id, date, content, updated_at)
-          SELECT ?, date, content, updated_at FROM notes;
-        DROP TABLE notes;
-        ALTER TABLE notes_mig RENAME TO notes;
-      `);
+        );`);
+			db
+				.prepare(
+					`INSERT INTO notes_mig (user_id, date, content, updated_at)
+          SELECT ?, date, content, updated_at FROM notes`,
+				)
+				.run(ownerId);
+			db.exec("DROP TABLE notes; ALTER TABLE notes_mig RENAME TO notes;");
 		}
 
 		// settings: old PK (key) -> (user_id, key)
@@ -262,26 +265,31 @@ function migrateAuth(db_) {
           value TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           PRIMARY KEY (user_id, key)
-        );
-        INSERT INTO settings_mig (user_id, key, value, updated_at)
-          SELECT ?, key, value, updated_at FROM settings;
-        DROP TABLE settings;
-        ALTER TABLE settings_mig RENAME TO settings;
-      `);
+        );`);
+			db
+				.prepare(
+					`INSERT INTO settings_mig (user_id, key, value, updated_at)
+          SELECT ?, key, value, updated_at FROM settings`,
+				)
+				.run(ownerId);
+			db.exec("DROP TABLE settings; ALTER TABLE settings_mig RENAME TO settings;");
 		}
 
 		// goals, push_subscriptions: add column + backfill
 		if (!hasCol("goals", "user_id")) {
 			db.exec("ALTER TABLE goals ADD COLUMN user_id INTEGER");
 		}
-		db.exec(`UPDATE goals SET user_id = ? WHERE user_id IS NULL OR user_id = 0`, ownerId);
+		db
+			.prepare(`UPDATE goals SET user_id = ? WHERE user_id IS NULL OR user_id = 0`)
+			.run(ownerId);
 		if (!hasCol("push_subscriptions", "user_id")) {
 			db.exec("ALTER TABLE push_subscriptions ADD COLUMN user_id INTEGER");
 		}
-		db.exec(
-			`UPDATE push_subscriptions SET user_id = ? WHERE user_id IS NULL OR user_id = 0`,
-			ownerId,
-		);
+		db
+			.prepare(
+				`UPDATE push_subscriptions SET user_id = ? WHERE user_id IS NULL OR user_id = 0`,
+			)
+			.run(ownerId);
 
 		db.exec(
 			`INSERT INTO meta (key, value) VALUES ('schema_version', '2')
