@@ -78,7 +78,10 @@ function getDb() {
 function migrateGoals(d) {
 	const cols = d.prepare("PRAGMA table_info(goals)").all();
 	if (!cols.some((c) => c.name === "user_id")) {
-		d.exec("ALTER TABLE goals ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0 REFERENCES users(id) ON DELETE CASCADE");
+		// SQLite forbids ADD COLUMN with REFERENCES + non-NULL default, so the
+		// legacy column is nullable; the backfill below (and db.ts's migration)
+		// fills it, and the app always writes it on insert.
+		d.exec("ALTER TABLE goals ADD COLUMN user_id INTEGER REFERENCES users(id)");
 	}
 	if (!cols.some((c) => c.name === "type")) {
 		d.exec("ALTER TABLE goals ADD COLUMN type TEXT NOT NULL DEFAULT 'text'");
@@ -92,7 +95,8 @@ function migrateGoals(d) {
 	// kept here so this module's schema copy never lags behind).
 	const subCols = d.prepare("PRAGMA table_info(push_subscriptions)").all();
 	if (!subCols.some((c) => c.name === "user_id")) {
-		d.exec("ALTER TABLE push_subscriptions ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0 REFERENCES users(id) ON DELETE CASCADE");
+		// nullable: same SQLite ADD COLUMN restriction as goals above
+		d.exec("ALTER TABLE push_subscriptions ADD COLUMN user_id INTEGER REFERENCES users(id)");
 	}
 	// goal_reminders: dedupe must be per-subscription now (a goal can be
 	// overdue for several users). Rebuild the table if the old PK lingers.
