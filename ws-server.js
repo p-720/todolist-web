@@ -91,14 +91,20 @@ function handleMessage(ws, user, msg) {
 	broadcastToUser(user.id, { ...msg, user: user.username });
 }
 
-export function initWebSocket(server, basePath = "/pomotask") {
+export function initWebSocket(
+	server,
+	basePath = "/pomotask",
+	{ passive = false } = {},
+) {
 	const wss = new WebSocketServer({ noServer: true });
 
 	server.on("upgrade", (req, socket, head) => {
 		const url = new URL(req.url ?? "", "http://localhost");
 		const path_ = `${basePath}/ws`;
 		if (url.pathname !== path_) {
-			socket.destroy();
+			// passive = shared server (vite dev): other upgrade consumers exist
+			// (vite's HMR ws) — never touch sockets that aren't ours.
+			if (!passive) socket.destroy();
 			return;
 		}
 

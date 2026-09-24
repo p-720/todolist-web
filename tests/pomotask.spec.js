@@ -154,4 +154,64 @@ test.describe("PomoTasker Habits", () => {
 
 		await expect(habitRow).not.toBeVisible();
 	});
+
+	test("running timer from another client shows after form login, no refresh", async ({ page, request }) => {
+		// The Android app's exact complaint: log in (or reopen the app) while a
+		// timer is already running on the server (started by rofi/polybar/the
+		// phone's own service) — the running state must appear without any
+		// manual refresh/pull-to-refresh.
+
+		// 1) Log in via the API to get a JWT (also proves the fresh-db p720 user).
+		const password = process.env.POMOTASK_TEST_PASSWORD;
+		const loginRes = await request.post(`${BASE_URL}/api/auth`, {
+			data: { action: "login", username: "p720", password },
+			});
+		expect(loginRes.ok(), `login failed: ${loginRes.status()}`).toBeTruthy();
+		const setCookie = loginRes.headers()["set-cookie"];
+		const jwt = setCookie?.match(/^pomo_token=([^;]*)/)?.[1];
+		expect(jwt, "no pomo_token cookie").toBeTruthy();
+
+		// 2) Start a running timer as a second client (raw ws with the JWT),
+		//    like the phone's background service would.
+		const { WebSocket: NodeWS } = await import("ws");
+		const proto = new URL(BASE_URL).protocol === "https:" ? "wss:" : "ws:";
+		const other = new NodeWS(`${proto}//${new URL(BASE_URL).host}/pomotask/ws?token=${jwt}`);
+		await new Promise((res, rej) => {
+			other.on("open", res);
+			other.on("error", rej);
+		});
+		other.send(
+			JSON.stringify({
+				type: "timer:update",
+				data: {
+					running: true,
+					activeHabitId: null,
+					name: "Probe Task",
+					mode: "stopwatch",
+					elapsed: 0,
+					startTime: Date.now(),
+					elapsedBefore: 0,
+				},
+			}),
+		);
+
+		// 3) Cold login through the real form, exactly like the app does.
+		await page.context().clearCookies();
+		await page.goto(BASE_URL);
+		await page.waitForURL(/\/login\/?$/, { timeout: 15000 });
+		await page.getByLabel("Username").fill("p720");
+		await page.getByLabel("Password").fill(password);
+		await page.getByRole("button", { name: "Sign in" }).click();
+		await page.waitForURL((u) => !String(u).endsWith("/login"), { timeout: 15000 });
+
+		// 4) The running quick task must appear in the banner by itself.
+		await expect(page.locator(".timer-banner").locator(".timer-habit")).toHaveText("Probe Task", {
+			timeout: 15000,
+		});
+		await expect(page.locator(".timer-banner")).toHaveClass(/active/);
+
+		// cleanup: stop the timer, close the second client
+		other.send(JSON.stringify({ type: "timer:stop" }));
+		other.close();
+	});
 });

@@ -2,6 +2,7 @@
   import { base } from '$app/paths';
   import { goto } from '$app/navigation';
   import { loadAuth, authStore } from '$lib/stores/auth.js';
+  import { initSync } from '$lib/stores/sync.js';
 
   let username = '';
   let password = '';
@@ -30,6 +31,8 @@
       }
       authStore.set({ authenticated: true, username: data.username });
       loadAuth();
+      // Same as login: the layout's onMount won't re-run after this SPA goto
+      initSync();
       goto(`${base}/`);
     } catch (e) {
       error = String(e);

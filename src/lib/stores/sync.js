@@ -1,6 +1,8 @@
 import { browser } from "$app/environment";
 import { base } from "$app/paths";
+import { get } from "svelte/store";
 import { timerStore } from "./timer.js";
+import { authStore } from "./auth.js";
 
 let ws = null;
 let reconnectTimer = null;
@@ -12,6 +14,16 @@ const CLIENT_ID = browser ? Math.random().toString(36).slice(2, 9) : "server";
 export function initSync() {
 	if (!browser) return;
 	connect();
+}
+
+// Self-heal for restored pages (Android WebView state restore, tab return):
+// onMount may never have run, so the socket can be dead with nothing to
+// restart it. Reconnecting on focus is a no-op while OPEN/CONNECTING, and is
+// gated on auth so the pre-login page doesn't 401-poll the server.
+if (browser) {
+	window.addEventListener("focus", () => {
+		if (get(authStore).authenticated) connect();
+	});
 }
 
 function startPing() {

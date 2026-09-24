@@ -32,6 +32,9 @@ Notes on auth (added with the multi-user rollout):
 ### Notes
 - Uses system `playwright` (nix store), not `playwright-cli` or npm `@playwright/test`
 - Dev server runs on `http://localhost:5173/pomotask` (SvelteKit base path)
+- The dev server also serves the app websocket (`/pomotask/ws`, wired in
+  `vite.config.ts`), so WS-dependent features can be tested in dev just like
+  in the production build (`node server.js`).
 - `find`/`grep` banned. Use `fd`/`rg` only.
 
 ## Android app
