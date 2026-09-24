@@ -13,9 +13,21 @@ ln -sf /nix/store/1i3ahl6fk8llj3f0qnpzmi6rvks5fxdi-playwright-test-1.59.1/lib/no
 # Terminal 1: start dev server
 POMO_BASE='' npm run dev
 
-# Terminal 2: run Playwright tests
-APP_URL=http://localhost:5173/pomotask /run/current-system/sw/bin/playwright test tests/pomotask.spec.js --project=firefox
+# Terminal 2: run Playwright tests (fresh db is fine — the first login
+# triggers the auth migration, which seeds the p720 user)
+APP_URL=http://localhost:5173/pomotask \
+POMOTASK_TEST_PASSWORD='...' \
+/run/current-system/sw/bin/playwright test tests/pomotask.spec.js --project=firefox
 ```
+
+Notes on auth (added with the multi-user rollout):
+- Every `/api/*` route requires a session: login `POST /pomotask/api/auth`
+  with `{action:"login",username,password}` sets a `pomo_token` cookie (JWT,
+  1-year expiry, signing secret in `data/auth-secret`, mode 0600).
+- Tests log in as `p720` (the migration owner); its password is only its
+  scrypt hash in the code — pass the real one via `POMOTASK_TEST_PASSWORD`.
+- The spec copies the API login's cookie into the browser context, since the
+  Playwright `request` and `page` fixtures don't share cookies.
 
 ### Notes
 - Uses system `playwright` (nix store), not `playwright-cli` or npm `@playwright/test`

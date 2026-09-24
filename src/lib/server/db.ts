@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, readFileSync } from "fs";
 import path from "path";
 
 const dbPath = path.join(process.cwd(), "data", "pomotasker.db");
@@ -25,6 +25,7 @@ export function getDb() {
 		migrateArchive(db);
 		migrateGoalType(db);
 		migrateAuth(db);
+		migrateCalendarAuth(db);
 	}
 	return db;
 }
@@ -141,10 +142,12 @@ function initSchema(db) {
     );
 
     CREATE TABLE IF NOT EXISTS calendar_open_events (
-      habit_id INTEGER PRIMARY KEY,
+      habit_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
       calendar_id TEXT NOT NULL,
       event_id TEXT NOT NULL,
-      start_iso TEXT NOT NULL
+      start_iso TEXT NOT NULL,
+      PRIMARY KEY (habit_id, user_id)
     );
   `);
 }
@@ -291,7 +294,7 @@ function migrateAuth(db_) {
 			)
 			.run(ownerId);
 
-		db.exec(
+				db.exec(
 			`INSERT INTO meta (key, value) VALUES ('schema_version', '2')
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 		);
@@ -299,6 +302,96 @@ function migrateAuth(db_) {
 	} catch (e) {
 		db.exec("ROLLBACK");
 		throw e;
+	}
+}
+
+
+// --- Per-user Google Calendar (idempotent, runs every boot) ------------------
+// Separate from the marker-gated migrateAuth on purpose: prod DBs are already
+// at schema v2, so a v2-gated step would never run. Every step is a no-op
+// once done.
+function migrateCalendarAuth(db_) {
+	const ownerId = db_.prepare("SELECT MIN(id) as id FROM users").get()?.id;
+	const openPks = db_
+		.prepare("PRAGMA table_info(calendar_open_events)")
+		.all()
+		.filter((c) => c.pk > 0)
+		.map((c) => c.name)
+		.sort()
+		.join(",");
+	if (openPks !== "habit_id,user_id") {
+		if (!hasCol("calendar_open_events", "user_id")) {
+			db_.exec("ALTER TABLE calendar_open_events ADD COLUMN user_id INTEGER");
+		}
+		// open events belong to the owning habit's user
+		db_
+			.prepare(
+				"UPDATE calendar_open_events SET user_id = (SELECT user_id FROM habits h WHERE h.id = calendar_open_events.habit_id) WHERE user_id IS NULL",
+			)
+			.run();
+		db_.exec(`
+      CREATE TABLE calendar_open_events_mig (
+        habit_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        calendar_id TEXT NOT NULL,
+        event_id TEXT NOT NULL,
+        start_iso TEXT NOT NULL,
+        PRIMARY KEY (habit_id, user_id)
+      );`);
+		db_
+			.prepare(
+				"INSERT INTO calendar_open_events_mig (habit_id, user_id, calendar_id, event_id, start_iso) SELECT habit_id, user_id, calendar_id, event_id, start_iso FROM calendar_open_events WHERE user_id IS NOT NULL",
+			)
+			.run();
+		db_.exec(
+			"DROP TABLE calendar_open_events; ALTER TABLE calendar_open_events_mig RENAME TO calendar_open_events;",
+		);
+	}
+
+	db_.exec(`
+    CREATE TABLE IF NOT EXISTS calendar_creds (
+      user_id INTEGER NOT NULL PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      client_id TEXT NOT NULL DEFAULT '',
+      client_secret TEXT NOT NULL DEFAULT '',
+      token TEXT,
+      calendar_id TEXT,
+      calendar_name TEXT,
+      last_error TEXT,
+      last_error_at TEXT
+    );`);
+
+	// Pre-auth, the Google integration was ONE global account in data/*.json,
+	// used by p720. Adopt the files into the legacy owner's row (first user).
+	if (ownerId && !db_.prepare("SELECT 1 FROM calendar_creds WHERE user_id = ?").get(ownerId)) {
+		const dataDir = path.dirname(dbPath);
+		const file = (name) => {
+			try {
+				return JSON.parse(readFileSync(path.join(dataDir, name), "utf8"));
+			} catch {
+				return null;
+			}
+		};
+		const creds = file("google-oauth.json");
+		const token = file("google-token.json");
+		const prefs = file("calendar-prefs.json");
+		if (creds || token || prefs) {
+			db_
+				.prepare(
+					`INSERT INTO calendar_creds (user_id, client_id, client_secret, token, calendar_id, calendar_name, last_error, last_error_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				)
+				.run(
+					ownerId,
+					creds?.client_id || "",
+					creds?.client_secret || "",
+					token ? JSON.stringify(token) : null,
+					prefs?.calendarId || null,
+					prefs?.calendarName || null,
+					prefs?.lastError || null,
+					prefs?.lastErrorAt || null,
+				);
+			console.log(`[migrate] adopted legacy global google calendar into user ${ownerId}`);
+		}
 	}
 }
 
