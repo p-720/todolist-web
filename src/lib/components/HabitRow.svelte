@@ -419,6 +419,7 @@
 
   .circles-row {
     display: flex;
+    justify-content: space-between;
     gap: 4px;
     min-width: 0;
     overflow: hidden;
@@ -426,6 +427,7 @@
 
   .circle {
     flex: 1 1 0;
+    max-width: 56px;
     height: 38px;
     min-width: 0;
     overflow: hidden;
@@ -463,5 +465,44 @@
     background: #cba6f7;
     color: #1e1e2e;
     box-shadow: 0 0 12px rgba(203, 166, 247, 0.4);
+  }
+
+  @media (min-width: 900px) {
+    .habit-row {
+      padding: 14px 16px;
+      margin: 6px 0;
+      border-radius: 14px;
+      background: #232636;
+      border-color: #2f3347;
+    }
+
+    .habit-row:hover {
+      border-color: #3a3e55;
+    }
+
+    .habit-header {
+      margin-bottom: 11px;
+    }
+
+    .habit-desc {
+      font-size: 14px;
+      color: #e0e2e8;
+    }
+
+    .edit-btn {
+      font-size: 18px;
+      padding: 5px 8px;
+      line-height: 1;
+    }
+
+    .circles-row {
+      gap: 6px;
+    }
+
+    .circle {
+      height: 44px;
+      border-radius: 10px;
+      font-size: 12px;
+    }
   }
 </style>

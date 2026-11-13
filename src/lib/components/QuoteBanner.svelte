@@ -148,6 +148,31 @@
     color: #6c7086;
   }
 
+  @media (min-width: 900px) {
+    .quote-block {
+      text-align: left;
+      padding: 18px 18px 18px 20px;
+      margin: 0;
+      border: 1px solid #2f3347;
+      border-left: 3px solid #cba6f7;
+      border-radius: 4px 18px 18px 4px;
+      background: #232636;
+      font-size: 14px;
+      line-height: 1.6;
+      transition: background 140ms, border-color 140ms;
+    }
+
+    .quote-block:hover {
+      background: #262a3c;
+      border-color: #3a3e55;
+      border-left-color: #dcc9fb;
+    }
+
+    .quote-text {
+      color: #b8bfd8;
+    }
+  }
+
   .overlay {
     position: fixed;
     inset: 0;

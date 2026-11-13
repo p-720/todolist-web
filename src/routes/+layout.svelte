@@ -82,19 +82,59 @@
     background: var(--bg);
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    scrollbar-color: #363a4f transparent;
+    scrollbar-width: thin;
   }
 
   :global(body) {
     min-height: 100vh;
+    min-height: 100dvh;
   }
 
   .app {
     width: 100%;
     min-width: 0;
-    max-width: 480px;
     margin: 0 auto;
     min-height: 100vh;
+    min-height: 100dvh;
     background: var(--bg);
     overflow-x: hidden;
+  }
+
+  @media (max-width: 899px) {
+    .app {
+      max-width: 480px;
+    }
+  }
+
+  @media (min-width: 900px) {
+    .app {
+      background:
+        radial-gradient(900px 460px at 72% -8%, rgba(180, 190, 254, 0.07), transparent 68%),
+        radial-gradient(760px 420px at 12% -6%, rgba(203, 166, 247, 0.055), transparent 64%),
+        var(--bg);
+    }
+
+    :global(::-webkit-scrollbar) {
+      width: 10px;
+      height: 10px;
+    }
+
+    :global(::-webkit-scrollbar-track) {
+      background: transparent;
+    }
+
+    :global(::-webkit-scrollbar-thumb) {
+      background: #363a4f;
+      border: 3px solid transparent;
+      border-radius: 999px;
+      background-clip: content-box;
+    }
+
+    :global(::-webkit-scrollbar-thumb:hover) {
+      background: #454a60;
+      background-clip: content-box;
+      border: 3px solid transparent;
+    }
   }
 </style>

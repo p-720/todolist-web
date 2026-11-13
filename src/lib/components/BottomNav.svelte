@@ -141,4 +141,10 @@
     width: 56px;
     flex-shrink: 0;
   }
+
+  @media (min-width: 900px) {
+    .bottom-nav {
+      display: none;
+    }
+  }
 </style>

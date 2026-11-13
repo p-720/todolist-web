@@ -10,11 +10,13 @@
   import AddHabitDialog from '$lib/components/AddHabitDialog.svelte';
   import AddGoalDialog from '$lib/components/AddGoalDialog.svelte';
   import BottomNav from '$lib/components/BottomNav.svelte';
+  import SideNav from '$lib/components/SideNav.svelte';
   import FabButton from '$lib/components/FabButton.svelte';
   import StatsView from '$lib/components/StatsView.svelte';
   import GoalsView from '$lib/components/GoalsView.svelte';
   import NoteEditor from '$lib/components/NoteEditor.svelte';
   import QuoteBanner from '$lib/components/QuoteBanner.svelte';
+  import GoalsMini from '$lib/components/GoalsMini.svelte';
 
   let showAddDialog = false;
   let editingHabit = null;
@@ -25,6 +27,9 @@
   let showGoalDialog = false;
   let editingGoal = null;
   let goalsBadge = 0;
+
+  $: pageTitle = activeTab === 'goals' ? 'Goals' : activeTab === 'stats' ? 'Statistics' : 'Today';
+  $: todayLabel = dayjs().format('dddd, D MMMM');
 
   function getWeekRange() {
     const today = dayjs();
@@ -53,6 +58,11 @@
       console.error(`loadData failed (attempt ${loadAttempts}):`, err);
       if (loadAttempts < 3) setTimeout(loadData, [2000, 5000, 10000][loadAttempts - 1]);
     }
+  }
+
+  function openAdd() {
+    if (activeTab === 'goals') openAddGoalDialog();
+    else openAddDialog();
   }
 
   function openAddDialog() {
@@ -151,16 +161,54 @@
 </script>
 
 <div class="app-container">
-  {#if activeTab === 'main'}
-    <QuoteBanner />
-    <TimerBanner {habitsStore} />
-    <WeekSummary {habitsStore} />
-    <HabitList {groupsStore} onEdit={openEditDialog} onArchive={archiveHabit} onUnarchive={unarchiveHabit} onPermanentDelete={permanentlyDeleteHabit} onOpenNote={() => openNoteEditor()} />
-  {:else if activeTab === 'goals'}
-    <GoalsView on:overdue={onGoalsOverdue} on:edit={(e) => openEditGoalDialog(e.detail.goal)} />
-  {:else}
-    <StatsView on:editnote={(e) => openNoteEditor(e.detail.date)} />
-  {/if}
+  <SideNav bind:activeTab {goalsBadge} />
+
+  <aside class="focus-rail" class:rail-hidden={activeTab !== 'main'}>
+    <div class="rail-block rail-focus">
+      <p class="rail-title">Focus</p>
+      <TimerBanner {habitsStore} />
+    </div>
+    <div class="rail-block rail-week">
+      <WeekSummary {habitsStore} />
+    </div>
+    <div class="rail-block rail-goals">
+      <GoalsMini onOpen={() => activeTab = 'goals'} />
+    </div>
+    <div class="rail-block rail-quote">
+      <QuoteBanner />
+    </div>
+  </aside>
+
+  <div class="main-panel">
+    <header class="page-head">
+      <div class="page-head-copy">
+        <p class="page-eyebrow">{todayLabel}</p>
+        <h1>{pageTitle}</h1>
+      </div>
+      {#if activeTab !== 'stats'}
+        <button class="page-action" on:click={openAdd}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+            <path d="M12 5v14M5 12h14"></path>
+          </svg>
+          New {activeTab === 'goals' ? 'goal' : 'habit'}
+        </button>
+      {/if}
+    </header>
+
+    {#if activeTab === 'main'}
+      <HabitList {groupsStore} onEdit={openEditDialog} onArchive={archiveHabit} onUnarchive={unarchiveHabit} onPermanentDelete={permanentlyDeleteHabit} onOpenNote={() => openNoteEditor()} />
+    {:else if activeTab === 'goals'}
+      <GoalsView on:overdue={onGoalsOverdue} on:edit={(e) => openEditGoalDialog(e.detail.goal)} />
+    {:else}
+      <StatsView on:editnote={(e) => openNoteEditor(e.detail.date)} />
+    {/if}
+  </div>
+
+  <BottomNav bind:activeTab showFab={activeTab === 'main' || activeTab === 'goals'} {goalsBadge}>
+    <svelte:fragment slot="fab">
+      <FabButton onClick={activeTab === 'goals' ? openAddGoalDialog : openAddDialog} />
+    </svelte:fragment>
+  </BottomNav>
 
   {#if showAddDialog}
     <AddHabitDialog {editingHabit} on:close={() => showAddDialog = false} on:added={afterAddHabit} />
@@ -175,12 +223,6 @@
   {/if}
 </div>
 
-<BottomNav bind:activeTab showFab={activeTab === 'main' || activeTab === 'goals'} {goalsBadge}>
-  <svelte:fragment slot="fab">
-    <FabButton onClick={activeTab === 'goals' ? openAddGoalDialog : openAddDialog} />
-  </svelte:fragment>
-</BottomNav>
-
 <style>
   .app-container {
     display: flex;
@@ -193,5 +235,284 @@
     overflow: hidden;
     overflow-x: hidden;
     min-width: 0;
+  }
+
+  .focus-rail {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    min-width: 0;
+  }
+
+  .rail-quote { order: 1; }
+  .rail-focus { order: 2; }
+  .rail-week { order: 3; }
+  .rail-goals { display: none; }
+
+  .rail-title {
+    display: none;
+  }
+
+  .main-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .page-head {
+    display: none;
+  }
+
+  .rail-hidden {
+    display: none;
+  }
+
+  @media (min-width: 900px) {
+    .app-container {
+      display: grid;
+      grid-template-columns: 216px minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 16px 20px;
+      height: 100vh;
+      height: 100dvh;
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      padding: 20px 16px;
+      padding-bottom: 20px;
+      overflow: hidden;
+    }
+
+    .rail-hidden {
+      display: grid;
+    }
+
+    :global(.side-nav) {
+      grid-column: 1;
+      grid-row: 1 / -1;
+    }
+
+    .focus-rail {
+      grid-column: 2;
+      grid-row: 1;
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr 1fr;
+      gap: 14px;
+      min-width: 0;
+      align-items: start;
+    }
+
+    .rail-block {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .rail-goals {
+      display: none;
+    }
+
+    .rail-focus { order: 0; }
+    .rail-week { order: 0; }
+    .rail-quote { order: 0; }
+
+    .rail-focus :global(.timer-banner),
+    .rail-quote :global(.quote-block),
+    .rail-week :global(.week-card) {
+      box-sizing: border-box;
+    }
+
+    .rail-focus :global(.timer-banner) {
+      padding: 14px;
+    }
+
+    .rail-focus :global(.timer-big b) {
+      font-size: 24px;
+    }
+
+    .rail-focus :global(.timer-display) {
+      min-height: 44px;
+    }
+
+    .rail-focus :global(.timer-controls) {
+      margin-top: 12px;
+      gap: 6px;
+    }
+
+    .rail-focus :global(.mode-long) {
+      display: none;
+    }
+
+    .rail-focus :global(.mode-short) {
+      display: inline;
+    }
+
+    .rail-week :global(.week-card) {
+      padding: 14px;
+    }
+
+    .rail-week :global(.week-card-head) {
+      margin-bottom: 10px;
+    }
+
+    .rail-week :global(.week-metrics) {
+      margin-bottom: 12px;
+    }
+
+    .rail-week :global(.week-bars) {
+      height: 44px;
+    }
+
+    .rail-quote :global(.quote-block) {
+      padding: 14px 16px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .rail-quote :global(.quote-text) {
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .main-panel {
+      grid-column: 2;
+      grid-row: 2;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .page-head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 2px 0 18px;
+      flex-shrink: 0;
+    }
+
+    .page-head-copy {
+      min-width: 0;
+    }
+
+    .page-eyebrow {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #6c7086;
+      margin-bottom: 6px;
+    }
+
+    .page-head h1 {
+      font-size: 28px;
+      line-height: 1.1;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: #e6e9f5;
+    }
+
+    .page-action {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 10px;
+      background: #cba6f7;
+      color: #1e1e2e;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 140ms, transform 140ms;
+      flex-shrink: 0;
+    }
+
+    .page-action:hover {
+      background: #dcc9fb;
+    }
+
+    .page-action:active {
+      transform: scale(0.97);
+    }
+
+    .page-action svg {
+      width: 15px;
+      height: 15px;
+    }
+  }
+
+  @media (min-width: 1360px) {
+    .app-container {
+      grid-template-columns: 232px minmax(0, 1fr) 332px;
+      grid-template-rows: minmax(0, 1fr);
+      gap: 24px;
+      padding: 22px 16px;
+    }
+
+    .focus-rail {
+      grid-column: 3;
+      grid-row: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+      padding-right: 2px;
+    }
+
+    .rail-focus { order: 1; }
+    .rail-week { order: 2; }
+    .rail-goals { display: block; order: 3; }
+    .rail-quote { order: 4; margin-top: auto; }
+
+    .rail-title {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #6c7086;
+      margin-bottom: 8px;
+      padding-left: 2px;
+    }
+
+    .rail-focus :global(.timer-banner),
+    .rail-quote :global(.quote-block),
+    .rail-week :global(.week-card) {
+      height: auto;
+    }
+
+    .rail-focus :global(.timer-banner) {
+      padding: 18px;
+    }
+
+    .rail-focus :global(.mode-long) {
+      display: inline;
+    }
+
+    .rail-focus :global(.mode-short) {
+      display: none;
+    }
+
+    .rail-quote :global(.quote-text) {
+      display: block;
+      overflow: visible;
+    }
+
+    .main-panel {
+      grid-column: 2;
+      grid-row: 1;
+    }
+  }
+
+  @media (min-width: 1600px) {
+    .app-container {
+      grid-template-columns: 252px minmax(0, 1fr) 360px;
+      gap: 28px;
+      padding: 24px 16px;
+    }
   }
 </style>

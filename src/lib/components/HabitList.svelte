@@ -325,7 +325,7 @@
           <button class="archive-toggle" on:click={toggleShowArchived}>
             📁 Show archived
           </button>
-          <button class="archive-toggle" on:click={signOut} aria-label="Sign out">
+          <button class="archive-toggle signout-btn" on:click={signOut} aria-label="Sign out">
             ⏻ Sign out
           </button>
         </div>
@@ -343,14 +343,14 @@
       </div>
     {/if}
   {/if}
-  <div class="habit-list-inner">
+  <div class="habit-list-inner" class:archive-mode={showArchived}>
     {#if !showArchived}
       {#each visibleGroups as group (group.id)}
         {#if draggedType === 'group' && dropTarget && dropTarget.id === group.id && !dropAfter}
           <div class="drop-ghost">{draggedGroup.name}</div>
         {/if}
 
-        <div class="group-section" class:drop-target={draggedType === 'group' && dropTarget && dropTarget.id === group.id} style={group.color ? `border-left: 3px solid ${group.color};` : ''}>
+        <div class="group-section" class:is-empty={group.visibleCount === 0} class:drop-target={draggedType === 'group' && dropTarget && dropTarget.id === group.id} style={group.color ? `border-left: 3px solid ${group.color};` : ''}>
           <div class="group-header"
             draggable={true}
             on:dragstart={(e) => handleDragStart('group', group, e)}
@@ -853,5 +853,129 @@
     font-size: 14px;
     pointer-events: none;
     opacity: 0.7;
+  }
+
+  @media (min-width: 900px) {
+    .habit-list {
+      padding: 0;
+    }
+
+    .habit-list-header {
+      padding: 0 0 14px;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .header-left,
+    .header-toggles {
+      gap: 8px;
+    }
+
+    .add-group-btn,
+    .note-btn,
+    .hide-toggle,
+    .archive-toggle {
+      font-size: 12px;
+      padding: 8px 13px;
+      border-radius: 9px;
+      border-color: #2f3347;
+    }
+
+    .signout-btn {
+      display: none;
+    }
+
+    .new-group-row {
+      padding: 0 0 12px;
+      gap: 8px;
+    }
+
+    .new-group-row input {
+      font-size: 13px;
+      padding: 9px 12px;
+    }
+
+    .new-group-row button {
+      font-size: 12px;
+      padding: 9px 12px;
+    }
+
+    .habit-list-inner {
+      padding-right: 4px;
+    }
+
+    .habit-list-inner:not(.archive-mode) {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 14px;
+      align-items: start;
+    }
+
+    .habit-list-inner:not(.archive-mode) .drop-ghost {
+      grid-column: 1 / -1;
+    }
+
+    .group-section {
+      margin-bottom: 0;
+      padding: 2px 10px 10px;
+      background: #20232f;
+      border: 1px solid #2b2f42;
+      border-radius: 16px;
+      min-width: 0;
+    }
+
+    .group-section.is-empty {
+      display: none;
+    }
+
+    .group-header {
+      padding: 10px 6px;
+      gap: 8px;
+    }
+
+    .group-icon {
+      font-size: 16px;
+    }
+
+    .group-name {
+      font-size: 14px;
+    }
+
+    .group-count {
+      font-size: 12px;
+    }
+
+    .group-chevron {
+      font-size: 11px;
+    }
+
+    .group-menu-btn {
+      font-size: 18px;
+    }
+
+    .habit-wrapper {
+      border-radius: 14px;
+    }
+
+    .archived-row {
+      padding: 14px 16px;
+      margin: 6px 0;
+      border-radius: 14px;
+    }
+
+    .archived-desc {
+      font-size: 14px;
+    }
+
+    .unarchive-btn,
+    .perm-delete-btn {
+      font-size: 12px;
+      padding: 8px 12px;
+    }
+
+    .empty-archive {
+      font-size: 14px;
+      padding: 40px 0;
+    }
   }
 </style>

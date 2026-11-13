@@ -267,8 +267,7 @@
           {#each monthHeaders as header, i}
             {@const endIdx = monthHeaders[i + 1]?.weekIndex ?? weeks.length}
             {@const numGaps = i > 0 ? 1 : 0}
-            {@const colWidth = (endIdx - header.weekIndex) * (12 + 2) + numGaps * 4}
-            <span class="month-label" style="width: {colWidth}px">{header.label}</span>
+            <span class="month-label" style="width: calc({endIdx - header.weekIndex} * (var(--cal-size) + 2px){numGaps ? ` + ${numGaps * 4}px` : ''})">{header.label}</span>
           {/each}
         </div>
         <table class="calendar-table">
@@ -360,8 +359,7 @@
               {#each monthHeaders as header, i}
                 {@const endIdx = monthHeaders[i + 1]?.weekIndex ?? weeks.length}
                 {@const numGaps = i > 0 ? 1 : 0}
-                {@const colWidth = (endIdx - header.weekIndex) * (12 + 2) + numGaps * 4}
-                <span class="month-label" style="width: {colWidth}px">{header.label}</span>
+                <span class="month-label" style="width: calc({endIdx - header.weekIndex} * (var(--cal-size) + 2px){numGaps ? ` + ${numGaps * 4}px` : ''})">{header.label}</span>
               {/each}
             </div>
             <table class="calendar-table">
@@ -410,9 +408,10 @@
     overflow-y: auto;
     padding: 8px 12px 80px 12px;
     -webkit-overflow-scrolling: touch;
+    --cal-size: 12px;
   }
 
-  .loading, .empty {
+  .loading, .stats-view > .empty {
     text-align: center;
     color: #6c7086;
     font-size: 14px;
@@ -634,9 +633,9 @@
   }
 
   .cal-cell {
-    width: 12px;
-    min-width: 12px;
-    height: 12px;
+    width: var(--cal-size);
+    min-width: var(--cal-size);
+    height: var(--cal-size);
     padding: 0;
     border-radius: 2px;
     cursor: pointer;
@@ -666,4 +665,122 @@
 
   .legend-label { font-size: 10px; color: #6c7086; }
   .legend-box { width: 12px; height: 12px; border-radius: 2px; }
+
+  @media (min-width: 900px) {
+    .stats-view {
+      padding: 0;
+      --cal-size: 14px;
+    }
+
+    .stats-header {
+      display: none;
+    }
+
+    .loading, .stats-view > .empty {
+      font-size: 14px;
+      padding: 48px 0;
+    }
+
+    .aggregate-card {
+      --cal-size: 18px;
+      background: #232636;
+      border-color: #2f3347;
+      border-radius: 18px;
+      padding: 18px;
+      margin-bottom: 16px;
+    }
+
+    .aggregate-header {
+      margin-bottom: 14px;
+    }
+
+    .aggregate-title {
+      font-size: 15px;
+    }
+
+    .aggregate-subtitle {
+      font-size: 11px;
+    }
+
+    .calendar-scroll {
+      margin: 0;
+      padding: 0;
+    }
+
+    .month-label {
+      font-size: 10px;
+    }
+
+    .day-label-cell {
+      font-size: 10px;
+    }
+
+    .summary-row {
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .summary-card {
+      background: #232636;
+      border-color: #2f3347;
+      border-radius: 18px;
+      padding: 20px 12px;
+      gap: 6px;
+    }
+
+    .summary-icon {
+      font-size: 22px;
+    }
+
+    .summary-value {
+      font-size: 24px;
+      letter-spacing: -0.02em;
+    }
+
+    .summary-label {
+      font-size: 10px;
+    }
+
+    .habit-stats-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 12px;
+      align-items: start;
+    }
+
+    .habit-stat-card {
+      background: #232636;
+      border-color: #2f3347;
+      border-radius: 18px;
+      padding: 16px;
+    }
+
+    .habit-stat-name {
+      font-size: 14px;
+      color: #e6e9f5;
+    }
+
+    .habit-stat-badge {
+      font-size: 9px;
+      padding: 3px 7px;
+    }
+
+    .habit-stat-total {
+      font-size: 15px;
+    }
+
+    .habit-stat-header {
+      margin-bottom: 12px;
+    }
+
+    .legend {
+      margin-top: 10px;
+    }
+
+    .legend-box {
+      width: 14px;
+      height: 14px;
+    }
+  }
+
 </style>

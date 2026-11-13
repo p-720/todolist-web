@@ -508,4 +508,86 @@
     padding: 12px;
     text-align: center;
   }
+
+  @media (min-width: 900px) {
+    .goals-view {
+      padding: 0;
+      gap: 16px;
+    }
+
+    .push-banner {
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: 13px;
+    }
+
+    .goal-section {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      gap: 12px;
+      align-items: start;
+    }
+
+    .section-title {
+      grid-column: 1 / -1;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      margin: 4px 0 2px;
+    }
+
+    .goal-card {
+      background: #232636;
+      border-color: #2f3347;
+      border-radius: 14px;
+      padding: 16px;
+      gap: 10px;
+      height: 100%;
+    }
+
+    .goal-card:hover {
+      border-color: #3a3e55;
+    }
+
+    .goal-title {
+      font-size: 15px;
+      color: #e6e9f5;
+    }
+
+    .goal-desc {
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .goal-due {
+      font-size: 11px;
+    }
+
+    .complete-btn, .edit-btn, .archive-btn, .reopen-btn, .delete-btn {
+      padding: 7px 12px;
+      font-size: 12px;
+    }
+
+    .counter-row {
+      margin-top: 9px;
+    }
+
+    .step-btn {
+      width: 32px;
+      height: 32px;
+    }
+
+    .counter-input {
+      padding: 6px 8px;
+    }
+
+    .archive-toggle {
+      padding: 12px;
+      font-size: 13px;
+      border-radius: 12px;
+    }
+
+    .empty, .empty-archive {
+      padding: 36px 12px;
+    }
+  }
 </style>

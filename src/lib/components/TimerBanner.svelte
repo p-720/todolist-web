@@ -12,6 +12,8 @@
   let activeTimer = null;
   let habits = [];
   let displayText = '0.0 pomodoros';
+  let timerValue = '0.0';
+  let timerDetail = 'pomodoros';
   let modeBtnText = 'S';
   let showQuickDialog = false;
 
@@ -119,6 +121,8 @@
   function updateDisplay() {
     if (!activeTimer?.running) {
       displayText = '0.0 pomodoros';
+      timerValue = '0.0';
+      timerDetail = 'pomodoros';
       return;
     }
 
@@ -135,16 +139,22 @@
       const mins = Math.floor(remaining / 60);
       const secs = remaining % 60;
 
+      timerValue = pomos.toFixed(1);
       if (remaining === 0) {
         displayText = `${pomos.toFixed(1)} pomodoros (complete!)`;
+        timerDetail = 'pomodoros · complete';
         onPomodoroComplete();
       } else {
-        displayText = `${pomos.toFixed(1)} pomodoros (${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')} left)`;
+        const clock = `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
+        displayText = `${pomos.toFixed(1)} pomodoros (${clock} left)`;
+        timerDetail = `pomodoros · ${clock} left`;
       }
     } else {
       const mins = Math.floor(elapsed / 60);
       const secs = elapsed % 60;
       displayText = `${mins}m ${secs}s elapsed`;
+      timerValue = `${mins}m ${secs}s`;
+      timerDetail = 'elapsed';
     }
   }
 
@@ -218,17 +228,24 @@
   {/if}
   <div class="timer-display">
     <span class="timer-text">{displayText}</span>
+    <span class="timer-big">
+      <b>{timerValue}</b>
+      <small>{timerDetail}</small>
+    </span>
   </div>
   <div class="timer-controls">
     {#if isQuickRunning}
       <button class="mode-btn stop-btn" on:click={stopTimer}>⏹ stop</button>
     {/if}
-    <button class="mode-btn" on:click={toggleMode}>{modeBtnText}</button>
-    <button class="notif-btn" on:click={requestNotifPermission} title="Enable notifications">{notifIcon}</button>
-    <button class="notif-btn quick-btn" class:dimmed={activeTimer?.running} on:click={openQuickDialog} title="Quick task timer — not added to habits">
+    <button class="mode-btn" title="Switch timer mode" on:click={toggleMode}>
+      <span class="mode-short">{modeBtnText}</span>
+      <span class="mode-long">{activeTimer?.mode === 'timed' ? 'Pomodoro' : 'Stopwatch'}</span>
+    </button>
+    <button class="notif-btn" on:click={requestNotifPermission} title="Enable notifications" aria-label="Enable notifications">{notifIcon}</button>
+    <button class="notif-btn quick-btn" class:dimmed={activeTimer?.running} on:click={openQuickDialog} title="Quick task timer — not added to habits" aria-label="Start quick task timer">
       ⚡
     </button>
-    <button class="notif-btn" on:click={() => goto(`${base}/calendar`)} title="Calendar tracking">
+    <button class="notif-btn" on:click={() => goto(`${base}/calendar`)} title="Calendar tracking" aria-label="Calendar tracking">
       <span class="cal-dot" class:cal-on={calendarConnected}>📅</span>
     </button>
   </div>
@@ -268,6 +285,14 @@
     font-size: 13px;
     font-weight: bold;
     color: #cdd6f4;
+  }
+
+  .timer-big {
+    display: none;
+  }
+
+  .mode-long {
+    display: none;
   }
 
   .timer-controls {
@@ -325,6 +350,93 @@
 
   .cal-dot.cal-on {
     filter: none;
+  }
+
+  @media (min-width: 900px) {
+    .timer-banner {
+      background: #232636;
+      border: 1px solid #2f3347;
+      border-radius: 18px;
+      padding: 18px;
+      margin: 0;
+    }
+
+    .timer-banner.active {
+      border-color: #6c5c94;
+      box-shadow: 0 0 28px rgba(203, 166, 247, 0.1);
+    }
+
+    .timer-habit {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #8b90a6;
+      margin-bottom: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .timer-display {
+      justify-content: flex-start;
+      padding: 0;
+      min-height: 54px;
+    }
+
+    .timer-text {
+      display: none;
+    }
+
+    .timer-big {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .timer-big b {
+      font-size: 30px;
+      line-height: 1.05;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: #e6e9f5;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .timer-big small {
+      font-size: 12px;
+      color: #8b90a6;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .timer-controls {
+      gap: 8px;
+      margin-top: 16px;
+      flex-wrap: wrap;
+    }
+
+    .mode-btn {
+      border-radius: 9px;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .mode-short {
+      display: none;
+    }
+
+    .mode-long {
+      display: inline;
+    }
+
+    .notif-btn {
+      border-radius: 9px;
+      padding: 8px 10px;
+      font-size: 13px;
+    }
   }
 
 </style>

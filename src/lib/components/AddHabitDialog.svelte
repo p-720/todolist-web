@@ -180,4 +180,17 @@
     background: #b4befe;
     color: #1e1e2e;
   }
+
+  @media (min-width: 900px) {
+    .dialog {
+      top: 50%;
+      bottom: auto;
+      transform: translate(-50%, -50%);
+      border-radius: 16px;
+      border-bottom: 1px solid #363a4f;
+      max-width: 460px;
+      padding-bottom: 20px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    }
+  }
 </style>

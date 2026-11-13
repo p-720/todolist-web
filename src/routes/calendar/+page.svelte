@@ -141,7 +141,7 @@
 <div class="page">
   <div class="box account">
     <div class="who">
-      <h2>Signed in as <b>{$authStore.username || '…'}</b></h2>
+      <p class="who-title">Signed in as <b>{$authStore.username || '…'}</b></p>
       <button class="btn" on:click={signOut}>Sign out</button>
     </div>
     <h3>API keys</h3>
@@ -167,67 +167,118 @@
     {/if}
   </div>
 
-  <h1>Calendar tracking</h1>
-  <p class="sub">Timer start/stop creates a live event in your Google Calendar.</p>
+  <header class="page-head">
+    <p class="eyebrow">Settings</p>
+    <h1>Calendar tracking</h1>
+    <p class="sub">Timer start/stop creates a live event in your Google Calendar.</p>
+    <a class="back-link" href="{base}/">← Back to Today</a>
+  </header>
 
-  {#if error}
-    <div class="box error">{error}</div>
-  {/if}
+  <div class="main-col">
+    {#if error}
+      <div class="box error">{error}</div>
+    {/if}
 
-  {#if !status}
-    <p class="sub">loading…</p>
-  {:else if !status.connected}
-    <div class="box">
-      <h2>{status.hasCreds ? 'Connect your Google account' : '1. Add OAuth client credentials'}</h2>
-      {#if !status.hasCreds}
-        <ol>
-          <li><a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console → Credentials → Create credentials → OAuth client ID</a></li>
-          <li>Type: <b>Web application</b></li>
-          <li>Authorized redirect URI: <code>{status.redirectUri}</code></li>
-          <li>Copy the client ID and client secret below</li>
-        </ol>
-      {:else}
-        <p class="sub">Credentials saved — connect below, or replace them in the form.</p>
-      {/if}
-      <input class="field" placeholder="Client ID" bind:value={clientId} />
-      <input class="field" type="password" placeholder="Client secret" bind:value={clientSecret} />
-      <button class="btn" on:click={saveCreds} disabled={busy || !clientId || !clientSecret}>Save credentials</button>
-    </div>
-    {#if status.hasCreds}
+    {#if !status}
+      <p class="sub">loading…</p>
+    {:else if !status.connected}
       <div class="box">
-        <button class="btn primary" on:click={connect} disabled={busy}>Connect to Google</button>
+        <h2>{status.hasCreds ? 'Connect your Google account' : '1. Add OAuth client credentials'}</h2>
+        {#if !status.hasCreds}
+          <ol>
+            <li><a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console → Credentials → Create credentials → OAuth client ID</a></li>
+            <li>Type: <b>Web application</b></li>
+            <li>Authorized redirect URI: <code>{status.redirectUri}</code></li>
+            <li>Copy the client ID and client secret below</li>
+          </ol>
+        {:else}
+          <p class="sub">Credentials saved — connect below, or replace them in the form.</p>
+        {/if}
+        <input class="field" placeholder="Client ID" bind:value={clientId} />
+        <input class="field" type="password" placeholder="Client secret" bind:value={clientSecret} />
+        <button class="btn" on:click={saveCreds} disabled={busy || !clientId || !clientSecret}>Save credentials</button>
+      </div>
+      {#if status.hasCreds}
+        <div class="box">
+          <button class="btn primary" on:click={connect} disabled={busy}>Connect to Google</button>
+        </div>
+      {/if}
+    {:else}
+      <div class="box">
+        <h2>Connected {status.calendarName ? `→ ${status.calendarName}` : ''}</h2>
+        {#if status.lastError}
+          <div class="err-line">last error: {status.lastError} {status.lastErrorAt}</div>
+        {:else}
+          <div class="ok-line">calendar: {status.calendarId ? 'tracking on' : 'pick a calendar below'}</div>
+        {/if}
+        {#if calendars}
+          <h3>Pick calendar</h3>
+          {#each calendars as cal}
+            <label class="cal-row">
+              <input type="radio" name="cal" value={cal.id} bind:group={selectedId} />
+              <span>{cal.summary}</span>
+            </label>
+          {/each}
+          <button class="btn" on:click={saveCalendar} disabled={!selectedId}>Save calendar</button>
+        {/if}
+        <button class="btn danger" on:click={disconnect}>Disconnect</button>
       </div>
     {/if}
-  {:else}
-    <div class="box">
-      <h2>Connected {status.calendarName ? `→ ${status.calendarName}` : ''}</h2>
-      {#if status.lastError}
-        <div class="err-line">last error: {status.lastError} {status.lastErrorAt}</div>
-      {:else}
-        <div class="ok-line">calendar: {status.calendarId ? 'tracking on' : 'pick a calendar below'}</div>
-      {/if}
-      {#if calendars}
-        <h3>Pick calendar</h3>
-        {#each calendars as cal}
-          <label class="cal-row">
-            <input type="radio" name="cal" value={cal.id} bind:group={selectedId} />
-            <span>{cal.summary}</span>
-          </label>
-        {/each}
-        <button class="btn" on:click={saveCalendar} disabled={!selectedId}>Save calendar</button>
-      {/if}
-      <button class="btn danger" on:click={disconnect}>Disconnect</button>
-    </div>
-  {/if}
+  </div>
 </div>
 
 <style>
   .page {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "side"
+      "head"
+      "main";
+    gap: 12px;
     padding: 16px;
     max-width: 560px;
     margin: 0 auto;
     color: #cdd6f4;
   }
+
+  .account {
+    grid-area: side;
+  }
+
+  .page-head {
+    grid-area: head;
+  }
+
+  .main-col {
+    grid-area: main;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .eyebrow {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #6c7086;
+    margin-bottom: 4px;
+  }
+
+  .back-link {
+    display: inline-flex;
+    margin-top: 10px;
+    color: #b4befe;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  .back-link:hover {
+    text-decoration: underline;
+  }
+
   h1 {
     font-size: 18px;
     margin: 8px 0 4px;
@@ -249,7 +300,6 @@
     background: #2a2e3f;
     border-radius: 12px;
     padding: 16px;
-    margin-top: 12px;
   }
   .box.error {
     border: 1px solid #f38ba8;
@@ -333,9 +383,11 @@
     justify-content: space-between;
     gap: 8px;
   }
-  .who h2 {
+  .who-title {
     font-size: 13px;
+    margin: 0;
   }
+
   .btn.sm {
     padding: 3px 8px;
     font-size: 11px;
@@ -368,5 +420,76 @@
     padding: 8px;
     font-size: 11px;
     word-break: break-all;
+  }
+
+  @media (min-width: 900px) {
+    .page {
+      grid-template-columns: minmax(0, 1fr) 360px;
+      grid-template-areas:
+        "head side"
+        "main side";
+      gap: 16px 28px;
+      max-width: 1120px;
+      padding: 40px 32px 64px;
+      align-items: start;
+    }
+
+    .page-head {
+      padding: 6px 0 10px;
+    }
+
+    .page-head h1 {
+      font-size: 32px;
+      line-height: 1.08;
+      letter-spacing: -0.03em;
+      color: #e6e9f5;
+      margin: 0 0 8px;
+    }
+
+    .page-head .sub {
+      font-size: 13px;
+      max-width: 58ch;
+      line-height: 1.55;
+    }
+
+    .main-col {
+      gap: 16px;
+    }
+
+    .account {
+      position: sticky;
+      top: 24px;
+    }
+
+    .box {
+      background: #232636;
+      border: 1px solid #2f3347;
+      border-radius: 18px;
+      padding: 22px;
+    }
+
+    .box.error {
+      border-color: #f38ba8;
+    }
+
+    .field {
+      font-size: 13px;
+      padding: 10px 12px;
+    }
+
+    .btn {
+      padding: 9px 16px;
+      font-size: 13px;
+    }
+
+    .key-row {
+      font-size: 12px;
+      padding: 8px 0;
+    }
+
+    .newkey code {
+      font-size: 12px;
+      padding: 10px;
+    }
   }
 </style>
