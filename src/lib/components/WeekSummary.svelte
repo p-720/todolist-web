@@ -37,9 +37,12 @@
       if (idx >= 0 && idx < 7) totals[idx] += Math.round((row.duration_seconds || 0) / 60);
     }
     const max = Math.max(...totals, 1);
+    const names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     days = totals.map((mins, i) => ({
       letter: ['M', 'T', 'W', 'T', 'F', 'S', 'S'][i],
+      name: names[i],
       mins,
+      title: `${names[i]}: ${mins > 0 ? `${mins} min focused` : 'no focus time'}`,
       height: mins > 0 ? Math.max(8, Math.round((mins / max) * 100)) : 0,
       today: i === (today.day() + 6) % 7,
     }));
@@ -76,9 +79,10 @@
         <span>pomodoros</span>
       </div>
     </div>
+    <p class="week-bars-caption">Focus minutes per day</p>
     <div class="week-bars" aria-hidden="true">
       {#each days as day}
-        <div class="week-bar">
+        <div class="week-bar" title={day.title}>
           <div class="week-bar-track" class:is-today={day.today}>
             <div class="week-bar-fill" class:is-today={day.today} style="height: {day.height}%"></div>
           </div>
@@ -170,6 +174,12 @@
       color: #6c7086;
     }
 
+    .week-bars-caption {
+      font-size: 9px;
+      color: #6c7086;
+      margin-bottom: 6px;
+    }
+
     .week-bars {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
@@ -196,7 +206,8 @@
     }
 
     .week-bar-track.is-today {
-      background: rgba(203, 166, 247, 0.16);
+      background: #2a2e3f;
+      box-shadow: inset 0 0 0 1px rgba(203, 166, 247, 0.5);
     }
 
     .week-bar-fill {
@@ -205,7 +216,7 @@
       right: 0;
       bottom: 0;
       border-radius: 4px;
-      background: #4b4f66;
+      background: #89b4fa;
       transition: height 300ms ease;
     }
 
