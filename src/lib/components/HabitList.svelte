@@ -345,6 +345,7 @@
   {/if}
   <div class="habit-list-inner" class:archive-mode={showArchived}>
     {#if !showArchived}
+      <div class="habit-columns">
       {#each visibleGroups as group (group.id)}
         {#if draggedType === 'group' && dropTarget && dropTarget.id === group.id && !dropAfter}
           <div class="drop-ghost">{draggedGroup.name}</div>
@@ -424,6 +425,7 @@
           <div class="drop-ghost">{draggedGroup.name}</div>
         {/if}
       {/each}
+      </div>
     {:else}
       {#if archivedHabits.length === 0}
         <div class="empty-archive">No archived habits</div>
@@ -904,19 +906,19 @@
       padding-right: 4px;
     }
 
-    .habit-list-inner:not(.archive-mode) {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-      gap: 14px;
-      align-items: start;
+    .habit-columns {
+      columns: 340px;
+      column-gap: 14px;
     }
 
-    .habit-list-inner:not(.archive-mode) .drop-ghost {
-      grid-column: 1 / -1;
+    .drop-ghost {
+      break-inside: avoid;
+      margin-bottom: 14px;
     }
 
     .group-section {
-      margin-bottom: 0;
+      break-inside: avoid;
+      margin-bottom: 14px;
       padding: 2px 10px 10px;
       background: #20232f;
       border: 1px solid #2b2f42;
