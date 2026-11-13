@@ -7,45 +7,74 @@
   export let habitsStore;
 
   let summary = '';
-  let sessions = 0;
-  let minutes = 0;
-  let pomos = 0;
+  let totalDone = 0;
+  let perfectDays = 0;
+  let rate = 0;
   let days = [];
   let weekLabel = '';
 
+  function isDone(habit, row) {
+    if (!row) return false;
+    if (habit.habit_type === 'timer') return (row.duration_seconds || 0) > 0;
+    if (habit.habit_type === 'boolean') return true;
+    if (habit.habit_type === 'number') return (row.value ?? 0) >= (habit.min_value || 0);
+    return false;
+  }
+
   function computeSummary() {
     const allRows = get(weekDataStore);
-    let totalSessions = 0;
-    let totalSeconds = 0;
-    for (const row of allRows) {
-      totalSessions++;
-      totalSeconds += row.duration_seconds || 0;
-    }
-    const totalPomos = totalSeconds / 1500;
-    sessions = totalSessions;
-    minutes = Math.floor(totalSeconds / 60);
-    pomos = totalPomos;
-    summary = `${totalSessions} sessions, ${minutes}m total, ${totalPomos.toFixed(1)} pomodoros`;
+    const habits = get(habitsStore);
+    const totalHabits = habits.length;
 
     const today = dayjs();
     const monday = today.subtract((today.day() + 6) % 7, 'day');
+    const todayIndex = (today.day() + 6) % 7;
     weekLabel = `${monday.format('D MMM')} – ${monday.add(6, 'day').format('D MMM')}`;
 
-    const totals = [0, 0, 0, 0, 0, 0, 0];
+    const byDate = new Map();
     for (const row of allRows) {
-      const idx = dayjs(row.date).diff(monday, 'day');
-      if (idx >= 0 && idx < 7) totals[idx] += Math.round((row.duration_seconds || 0) / 60);
+      if (!byDate.has(row.date)) byDate.set(row.date, []);
+      byDate.get(row.date).push(row);
     }
-    const max = Math.max(...totals, 1);
+
     const names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    days = totals.map((mins, i) => ({
-      letter: ['M', 'T', 'W', 'T', 'F', 'S', 'S'][i],
-      name: names[i],
-      mins,
-      title: `${names[i]}: ${mins > 0 ? `${mins} min focused` : 'no focus time'}`,
-      height: mins > 0 ? Math.max(8, Math.round((mins / max) * 100)) : 0,
-      today: i === (today.day() + 6) % 7,
-    }));
+    const nextDays = [];
+    let doneTotal = 0;
+    let perfect = 0;
+
+    for (let i = 0; i < 7; i++) {
+      const date = monday.add(i, 'day').format('YYYY-MM-DD');
+      const rows = byDate.get(date) || [];
+      let count = 0;
+      for (const habit of habits) {
+        const row = rows.find((r) => r.habit_id === habit.id);
+        if (isDone(habit, row)) count++;
+      }
+
+      doneTotal += count;
+      if (totalHabits > 0 && count === totalHabits) perfect++;
+
+      const height = totalHabits > 0 ? Math.round((count / totalHabits) * 100) : 0;
+      const doneText = count === totalHabits && totalHabits > 0
+        ? `all ${totalHabits} habits done`
+        : `${count} of ${totalHabits} habits done`;
+
+      nextDays.push({
+        letter: ['M', 'T', 'W', 'T', 'F', 'S', 'S'][i],
+        name: names[i],
+        count,
+        height: count > 0 ? Math.max(8, height) : 0,
+        title: `${names[i]}: ${doneText}`,
+        today: i === todayIndex,
+      });
+    }
+
+    days = nextDays;
+    totalDone = doneTotal;
+    perfectDays = perfect;
+    const elapsedDays = todayIndex + 1;
+    rate = totalHabits > 0 ? Math.round((doneTotal / (totalHabits * elapsedDays)) * 100) : 0;
+    summary = `${doneTotal} habits done, ${perfect} perfect ${perfect === 1 ? 'day' : 'days'}, ${rate}% completion`;
   }
 
   $: if ($habitsStore.length > 0) computeSummary();
@@ -67,24 +96,24 @@
     </div>
     <div class="week-metrics">
       <div class="week-metric">
-        <strong>{sessions}</strong>
-        <span>sessions</span>
+        <strong>{totalDone}</strong>
+        <span>done</span>
       </div>
       <div class="week-metric">
-        <strong>{minutes}<small>m</small></strong>
-        <span>focused</span>
+        <strong>{perfectDays}</strong>
+        <span>perfect days</span>
       </div>
       <div class="week-metric">
-        <strong>{pomos.toFixed(1)}</strong>
-        <span>pomodoros</span>
+        <strong>{rate}<small>%</small></strong>
+        <span>completion</span>
       </div>
     </div>
-    <p class="week-bars-caption">Focus minutes per day</p>
+    <p class="week-bars-caption">Habits completed per day</p>
     <div class="week-bars" aria-hidden="true">
       {#each days as day}
         <div class="week-bar" title={day.title}>
           <div class="week-bar-track" class:is-today={day.today}>
-            <div class="week-bar-fill" class:is-today={day.today} style="height: {day.height}%"></div>
+            <div class="week-bar-fill" style="height: {day.height}%"></div>
           </div>
           <span class:is-today={day.today}>{day.letter}</span>
         </div>
@@ -216,12 +245,8 @@
       right: 0;
       bottom: 0;
       border-radius: 4px;
-      background: #89b4fa;
+      background: #a6e3a1;
       transition: height 300ms ease;
-    }
-
-    .week-bar-fill.is-today {
-      background: #cba6f7;
     }
 
     .week-bar span {
